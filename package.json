@@ -13,7 +13,7 @@
     "dev:frontend": "npm run dev --workspace=frontend",
     "build": "npm run build --workspaces",
     "lint": "npm run lint --workspaces",
-    "test": "npm test --workspace=backend",
+    "test": "npm test --workspaces --if-present",
     "db:migrate": "npm run db:migrate --workspace=backend",
     "db:seed": "npm run db:seed --workspace=backend",
     "db:studio": "npm run db:studio --workspace=backend",

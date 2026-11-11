@@ -11,7 +11,8 @@ import { PrivacyPage } from './pages/PrivacyPage';
 import { AdminLayout } from './pages/admin/AdminLayout';
 import { DashboardPage } from './pages/admin/DashboardPage';
 import { AgendaPage } from './pages/admin/AgendaPage';
-import { ServicesPage, ProductsPage } from './pages/admin/AdminPages';
+import { ServicesPage } from './pages/admin/ServicesPage';
+import { ProductsPage } from './pages/admin/ProductsPage';
 
 function App() {
   return (
