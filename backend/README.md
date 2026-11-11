@@ -36,6 +36,10 @@ npm test                                  # testes (usam o banco do .env)
 | `/clients` | equipe (barbeiro: só quem atendeu); escrita recepção+ | `GET /?search&recurring`, `GET /:id`, `PUT /:id`, `POST /:id/anonymize` (dono/gerente, LGPD) |
 | `/settings` | recepção+ lê; dono/gerente altera | `GET`, `PUT` |
 | `/dashboard` | equipe (barbeiro: só os seus números) | `GET` |
+| `/orders` | equipe (barbeiro: só os próprios atendimentos); estorno dono/gerente | `POST` (fechar comanda), `GET ?registerId`, `POST /:id/void` |
+| `/register` | recepção+ | `GET` (caixa aberto), `POST /open`, `POST /movements`, `POST /close`, `GET /history` (dono/gerente) |
+| `/reports` | dono/gerente | `GET ?from&to` |
+| `/commissions` | equipe (barbeiro: só a própria); pagar dono/gerente | `GET ?from&to`, `POST /pay` |
 | `/products` | recepção+; cadastro dono/gerente | `GET /`, `GET /low-stock`, `GET /:id`, `POST`, `PUT`, `DELETE`, `POST/GET /:id/stock` |
 | `/notifications` | dono/gerente | `GET /`, `POST /process` |
 

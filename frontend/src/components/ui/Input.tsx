@@ -2,7 +2,7 @@
 // Barbearia Vikings — Input Component
 // =============================================
 
-import { forwardRef } from 'react';
+import { forwardRef, useId } from 'react';
 import type { InputHTMLAttributes } from 'react';
 import clsx from 'clsx';
 
@@ -14,7 +14,8 @@ interface InputProps extends InputHTMLAttributes<HTMLInputElement> {
 
 const Input = forwardRef<HTMLInputElement, InputProps>(
   ({ label, error, icon, className, id, ...props }, ref) => {
-    const inputId = id || label?.toLowerCase().replace(/\s+/g, '-');
+    const autoId = useId(); // único na página, mesmo com dois campos de mesmo rótulo
+    const inputId = id || autoId;
 
     return (
       <div className="space-y-1.5">

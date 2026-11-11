@@ -72,6 +72,8 @@ function MemberForm({ member, onClose }: { member: StaffMember | null; onClose: 
   const [password, setPassword] = useState('');
   const [phone, setPhone] = useState(member?.user.phone ?? '');
   const [role, setRole] = useState<Role>(member?.role ?? 'BARBER');
+  const [servicePct, setServicePct] = useState(String(member?.serviceCommissionPct ?? 0));
+  const [productPct, setProductPct] = useState(String(member?.productCommissionPct ?? 0));
   const [serviceIds, setServiceIds] = useState<string[]>(member?.services.map((s) => s.service.id) ?? []);
   const isSelf = member?.id === me.membershipId;
 
@@ -83,11 +85,13 @@ function MemberForm({ member, onClose }: { member: StaffMember | null; onClose: 
   };
   const onError = (e: unknown) => toast.error(apiErrorMessage(e));
 
+  const pcts = { serviceCommissionPct: Number(servicePct), productCommissionPct: Number(productPct) };
+
   const save = useMutation({
     mutationFn: () =>
       member
-        ? api.put(`/barbers/${member.id}`, { name, phone: phone || undefined, ...(isSelf ? {} : { role }), serviceIds })
-        : api.post('/barbers', { name, email, password, phone: phone || undefined, role, serviceIds }),
+        ? api.put(`/barbers/${member.id}`, { name, phone: phone || undefined, ...(isSelf ? {} : { role }), serviceIds, ...pcts })
+        : api.post('/barbers', { name, email, password, phone: phone || undefined, role, serviceIds, ...pcts }),
     onSuccess: () => done(member ? 'Membro atualizado' : 'Membro cadastrado'),
     onError,
   });
@@ -117,6 +121,11 @@ function MemberForm({ member, onClose }: { member: StaffMember | null; onClose: 
               .filter((r) => r !== 'OWNER' || me.role === 'OWNER')
               .map((r) => <option key={r} value={r}>{ROLES[r]}</option>)}
           </Select>
+        </div>
+
+        <div className="grid grid-cols-2 gap-3">
+          <Input label="Comissão serviços (%)" type="number" min={0} max={100} value={servicePct} onChange={(e) => setServicePct(e.target.value)} />
+          <Input label="Comissão produtos (%)" type="number" min={0} max={100} value={productPct} onChange={(e) => setProductPct(e.target.value)} />
         </div>
 
         <fieldset>

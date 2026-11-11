@@ -12,8 +12,8 @@ Sistema web (SaaS) para barbearias: **agendamento online 24h** para o cliente e 
 |------|----------|----------|
 | **0 — Fundação** | Multi-tenant, proteção contra double booking, fuso horário, autenticação real, permissões, testes e CI | ✅ Concluída |
 | **1 — MVP vendável** | Telas de gestão: agenda (filtros, status, encaixe), serviços, equipe, disponibilidade, clientes, produtos, configurações da barbearia; cancelamento pelo cliente via link; LGPD básica | ✅ Concluída (falta só o CAPTCHA, que precisa de conta no Cloudflare) |
-| **2 — Gestão** | Comanda, caixa, comissões, relatórios | ⏳ Próxima |
-| **3 — Automação** | WhatsApp (confirmação, lembrete, cancelamento), lista de espera, política de no-show | ⏳ |
+| **2 — Gestão** | Comanda, caixa, comissões, relatórios | ✅ Concluída |
+| **3 — Automação** | WhatsApp (confirmação, lembrete, cancelamento), lista de espera, política de no-show | ⏳ Próxima |
 | **4 — Plataforma** | Cadastro self-service de barbearias, planos e cobrança, multiunidade, fidelidade, PWA | ⏳ |
 
 ### Já funciona
@@ -29,10 +29,13 @@ Sistema web (SaaS) para barbearias: **agendamento online 24h** para o cliente e 
 | Tela | O que faz | Quem vê |
 |------|-----------|---------|
 | Dashboard | Atendimentos e faturamento do dia, concluídos e faltas do mês, próximos horários, alertas | Todos (barbeiro: só os próprios números) |
-| Agenda | Navegar por data, filtrar, confirmar, concluir, marcar falta, cancelar, remarcar, agendar pelo painel e encaixe; atualiza sozinha a cada 30s | Todos (barbeiro: só a própria agenda) |
+| Agenda | Navegar por data, filtrar, confirmar, **cobrar** (fecha a comanda e conclui), marcar falta, cancelar, remarcar, agendar pelo painel e encaixe; atualiza sozinha a cada 30s | Todos (barbeiro: só a própria agenda) |
+| Caixa | Abrir com troco, venda avulsa, suprimento, sangria, comandas do caixa, estorno, fechar com conferência do dinheiro; histórico de caixas | Dono, gerente e recepção (estorno e histórico: dono e gerente) |
+| Relatórios | Faturamento, ticket médio, formas de pagamento, por profissional, serviços e produtos mais vendidos, por dia, faltas; exportação CSV para o Excel | Dono e gerente |
+| Comissões | Comissão a pagar e paga por profissional no período; marcar como paga | Todos (barbeiro: só a própria; marcar pago: dono e gerente) |
 | Clientes | Busca, recorrentes, histórico, preferências, exclusão de dados (LGPD) | Todos (barbeiro: só quem atendeu) |
 | Horários | Grade semanal e folgas/bloqueios/horário especial por profissional | Todos (barbeiro: só o próprio) |
-| Equipe | Cadastrar membros, papéis e serviços que cada um atende | Dono e gerente |
+| Equipe | Cadastrar membros, papéis, serviços que cada um atende e % de comissão | Dono e gerente |
 | Serviços | Criar, editar preço/duração, desativar | Dono e gerente |
 | Produtos | Cadastro, estoque baixo, entrada/saída/ajuste com histórico | Dono, gerente e recepção |
 | Configurações | Regras de agendamento, cancelamento, recorrência, fuso | Dono e gerente editam; recepção vê |
@@ -146,6 +149,25 @@ Os testes de integração rodam contra um PostgreSQL de verdade e cobrem:
 ---
 
 ## Histórico
+
+### 2026-11-12 — Fase 2: gestão financeira
+- **Comanda:**
+  - itens de serviço e produto, desconto e gorjeta;
+  - pagamento misto (Pix, crédito, débito, dinheiro) e cálculo de troco;
+  - na agenda, o botão "Cobrar" fecha a comanda e conclui o atendimento ao mesmo tempo.
+- **Regras garantidas:**
+  - os preços vêm do cadastro, nunca do navegador, e o serviço agendado é cobrado pelo preço reservado;
+  - um agendamento não pode ser cobrado duas vezes;
+  - a venda de produto baixa o estoque na mesma operação: se faltar produto, nada é gravado.
+- **Estorno:** a comanda fica marcada como estornada e devolve o estoque. Não é permitido se a comissão já foi paga.
+- **Caixa:**
+  - abertura com troco, suprimento, sangria e venda avulsa;
+  - fechamento com o dinheiro contado e a diferença (sobra ou falta);
+  - só um caixa aberto por barbearia, garantido pelo banco.
+- **Comissão:** percentual por profissional para serviços e produtos, calculado sobre o valor pago (com o desconto rateado). Gorjeta é 100% do profissional.
+- **Relatórios** do período com exportação CSV, e **comissões** com a opção "marcar como pago".
+- **Acessibilidade:** os campos de formulário agora ficam sempre ligados ao rótulo, com ids únicos.
+- **Testes:** 4 do cálculo da comanda e 11 de integração (caixa, cobrança, estorno, comissão, relatório). No total, 37 de backend e 3 de frontend.
 
 ### 2026-11-11 — Fase 1: painel de gestão completo
 - **Agenda:**

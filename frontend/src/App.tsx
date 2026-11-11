@@ -17,6 +17,9 @@ import { TeamPage } from './pages/admin/TeamPage';
 import { SchedulePage } from './pages/admin/SchedulePage';
 import { ClientsPage } from './pages/admin/ClientsPage';
 import { SettingsPage } from './pages/admin/SettingsPage';
+import { CashPage } from './pages/admin/CashPage';
+import { ReportsPage } from './pages/admin/ReportsPage';
+import { CommissionsPage } from './pages/admin/CommissionsPage';
 
 function App() {
   return (
@@ -38,6 +41,9 @@ function App() {
         <Route path="equipe" element={<TeamPage />} />
         <Route path="horarios" element={<SchedulePage />} />
         <Route path="configuracoes" element={<SettingsPage />} />
+        <Route path="caixa" element={<CashPage />} />
+        <Route path="relatorios" element={<ReportsPage />} />
+        <Route path="comissoes" element={<CommissionsPage />} />
       </Route>
     </Routes>
   );

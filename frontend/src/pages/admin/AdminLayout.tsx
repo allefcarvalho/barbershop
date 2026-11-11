@@ -5,7 +5,7 @@
 import { Link, Navigate, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { authService, type SessionUser } from '../../services/auth.service';
-import { LayoutDashboard, Calendar, Scissors, Package, LogOut, ChevronRight, Users, Clock, UserRound, Settings } from 'lucide-react';
+import { LayoutDashboard, Calendar, Scissors, Package, LogOut, ChevronRight, Users, Clock, UserRound, Settings, Wallet, BarChart3, BadgePercent } from 'lucide-react';
 import clsx from 'clsx';
 import logo from '../../assets/logo.png';
 
@@ -17,11 +17,14 @@ const FRONT_DESK: Role[] = ['OWNER', 'MANAGER', 'RECEPTIONIST'];
 const sidebarLinks: { label: string; href: string; icon: typeof Calendar; roles?: Role[] }[] = [
   { label: 'Dashboard', href: '/admin', icon: LayoutDashboard },
   { label: 'Agenda', href: '/admin/agenda', icon: Calendar },
+  { label: 'Caixa', href: '/admin/caixa', icon: Wallet, roles: FRONT_DESK },
   { label: 'Clientes', href: '/admin/clientes', icon: UserRound },
   { label: 'Horários', href: '/admin/horarios', icon: Clock },
   { label: 'Equipe', href: '/admin/equipe', icon: Users, roles: MANAGERS },
   { label: 'Serviços', href: '/admin/servicos', icon: Scissors, roles: MANAGERS },
   { label: 'Produtos', href: '/admin/produtos', icon: Package, roles: FRONT_DESK },
+  { label: 'Relatórios', href: '/admin/relatorios', icon: BarChart3, roles: MANAGERS },
+  { label: 'Comissões', href: '/admin/comissoes', icon: BadgePercent },
   { label: 'Configurações', href: '/admin/configuracoes', icon: Settings, roles: FRONT_DESK },
 ];
 

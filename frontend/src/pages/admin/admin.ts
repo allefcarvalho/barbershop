@@ -1,5 +1,6 @@
 // Hooks, tipos e constantes compartilhados pelas telas do painel (componentes ficam em shared.tsx).
 import { useQuery } from '@tanstack/react-query';
+import { formatInTimeZone } from 'date-fns-tz';
 import { api } from '../../config/api';
 import { authService, type SessionUser } from '../../services/auth.service';
 
@@ -19,6 +20,8 @@ export interface StaffMember {
   id: string;
   role: SessionUser['role'];
   active: boolean;
+  serviceCommissionPct: number;
+  productCommissionPct: number;
   user: { id: string; name: string; email: string; phone: string | null; avatarUrl: string | null };
   services: { service: { id: string; name: string } }[];
 }
@@ -62,3 +65,22 @@ export const BOOKING_STATUS: Record<string, { label: string; className: string }
   CANCELLED: { label: 'Cancelado', className: 'bg-red-500/10 text-red-400 border-red-500/20' },
   NO_SHOW: { label: 'Não veio', className: 'bg-gray-500/10 text-gray-400 border-gray-500/20' },
 };
+
+export const PAYMENT_LABEL = { PIX: 'Pix', CREDIT: 'Crédito', DEBIT: 'Débito', CASH: 'Dinheiro' } as const;
+
+// ===== Períodos (relatórios e comissões) =====
+
+export interface Period { from: string; to: string }
+
+/** Atalhos de período calculados no fuso da barbearia. */
+export function presets(tz: string): { label: string; period: Period }[] {
+  const today = formatInTimeZone(new Date(), tz, 'yyyy-MM-dd');
+  const monthStart = `${today.slice(0, 8)}01`;
+  const lastMonthEnd = shiftDate(monthStart, -1);
+  return [
+    { label: 'Hoje', period: { from: today, to: today } },
+    { label: '7 dias', period: { from: shiftDate(today, -6), to: today } },
+    { label: 'Este mês', period: { from: monthStart, to: today } },
+    { label: 'Mês passado', period: { from: `${lastMonthEnd.slice(0, 8)}01`, to: lastMonthEnd } },
+  ];
+}

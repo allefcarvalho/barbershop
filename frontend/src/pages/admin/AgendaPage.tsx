@@ -2,7 +2,8 @@ import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { formatInTimeZone } from 'date-fns-tz';
 import toast from 'react-hot-toast';
-import { Calendar, ChevronLeft, ChevronRight, Plus, Zap, Star, Phone, CalendarClock } from 'lucide-react';
+import { Calendar, ChevronLeft, ChevronRight, Plus, Zap, Star, Phone, CalendarClock, Wallet } from 'lucide-react';
+import { CheckoutModal } from './CheckoutModal';
 import { api, apiErrorMessage } from '../../config/api';
 import { Button, Input, Modal } from '../../components/ui';
 import { formatBRL, formatPhone } from '../../utils/format';
@@ -33,6 +34,7 @@ export function AgendaPage() {
   const [barberId, setBarberId] = useState('');
   const [status, setStatus] = useState('');
   const [form, setForm] = useState<FormMode | null>(null);
+  const [charging, setCharging] = useState<Booking | null>(null);
   const { data: staff } = useStaff();
   const queryClient = useQueryClient();
 
@@ -162,7 +164,7 @@ export function AgendaPage() {
                 {open && (
                   <div className="flex flex-wrap gap-2 md:justify-end md:w-72">
                     {b.status === 'PENDING' && <Button size="sm" onClick={() => act(b, 'CONFIRMED')}>Confirmar</Button>}
-                    {b.status === 'CONFIRMED' && <Button size="sm" onClick={() => act(b, 'COMPLETED')}>Concluir</Button>}
+                    {b.status === 'CONFIRMED' && <Button size="sm" onClick={() => setCharging(b)}><Wallet className="w-3.5 h-3.5" /> Cobrar</Button>}
                     {b.status === 'CONFIRMED' && <Button size="sm" variant="secondary" onClick={() => act(b, 'NO_SHOW')}>Não veio</Button>}
                     <Button size="sm" variant="ghost" onClick={() => setForm({ kind: 'reschedule', booking: b })} aria-label="Remarcar">
                       <CalendarClock className="w-3.5 h-3.5" />
@@ -177,6 +179,7 @@ export function AgendaPage() {
       )}
 
       {form && <BookingForm mode={form} date={date} onClose={() => setForm(null)} />}
+      {charging && <CheckoutModal booking={charging} onClose={() => setCharging(null)} />}
     </div>
   );
 }
