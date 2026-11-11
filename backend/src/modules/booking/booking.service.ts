@@ -45,6 +45,31 @@ async function getBarberAndService(tenantId: string, barberId: string, serviceId
   return { barber, service };
 }
 
+/**
+ * Conclui um agendamento em aberto e atualiza as estatísticas do cliente (recorrência).
+ * Usado pela mudança de status e pela comanda. Atualização condicional evita concluir duas vezes.
+ */
+export async function completeBooking(
+  tx: Prisma.TransactionClient,
+  booking: { id: string; status: BookingStatus; clientId: string; startAt: Date },
+  tenantId: string,
+) {
+  if (!ACTIVE.includes(booking.status)) {
+    throw new HttpError(400, 'Este agendamento não está em aberto', 'INVALID_TRANSITION');
+  }
+  const { count } = await tx.booking.updateMany({ where: { id: booking.id, status: booking.status }, data: { status: 'COMPLETED' } });
+  if (count === 0) throw new HttpError(409, 'O agendamento foi alterado por outra pessoa. Recarregue.', 'STALE');
+
+  const tenant = await tx.tenant.findUniqueOrThrow({ where: { id: tenantId } });
+  const client = await tx.client.update({
+    where: { id: booking.clientId },
+    data: { totalBookings: { increment: 1 }, lastVisit: booking.startAt },
+  });
+  if (!client.isRecurring && client.totalBookings >= tenant.recurringThreshold) {
+    await tx.client.update({ where: { id: client.id }, data: { isRecurring: true } });
+  }
+}
+
 interface NewBooking {
   tenant: Tenant;
   barberId: string;
@@ -226,18 +251,11 @@ export const bookingService = {
     }
 
     return prisma.$transaction(async (tx) => {
-      const { count } = await tx.booking.updateMany({ where: { id, status: booking.status }, data: { status } });
-      if (count === 0) throw new HttpError(409, 'O agendamento foi alterado por outra pessoa. Recarregue.', 'STALE');
-
       if (status === 'COMPLETED') {
-        const tenant = await tx.tenant.findUniqueOrThrow({ where: { id: auth.tenantId } });
-        const client = await tx.client.update({
-          where: { id: booking.clientId },
-          data: { totalBookings: { increment: 1 }, lastVisit: booking.startAt },
-        });
-        if (!client.isRecurring && client.totalBookings >= tenant.recurringThreshold) {
-          await tx.client.update({ where: { id: client.id }, data: { isRecurring: true } });
-        }
+        await completeBooking(tx, booking, auth.tenantId);
+      } else {
+        const { count } = await tx.booking.updateMany({ where: { id, status: booking.status }, data: { status } });
+        if (count === 0) throw new HttpError(409, 'O agendamento foi alterado por outra pessoa. Recarregue.', 'STALE');
       }
 
       if (status === 'CANCELLED') {

@@ -80,6 +80,8 @@ model Tenant {
   services    Service[]
   bookings    Booking[]
   products    Product[]
+  orders      Order[]
+  registers   CashRegister[]
 
   @@map("tenants")
 }
@@ -104,12 +106,15 @@ model User {
 
 /// Vínculo usuário ↔ barbearia. Barbeiro = membership que atende serviços.
 model Membership {
-  id        String     @id @default(uuid())
-  tenantId  String     @map("tenant_id")
-  userId    String     @map("user_id")
-  role      MemberRole @default(BARBER)
-  active    Boolean    @default(true)
-  createdAt DateTime   @default(now()) @map("created_at") @db.Timestamptz(3)
+  id                   String     @id @default(uuid())
+  tenantId             String     @map("tenant_id")
+  userId               String     @map("user_id")
+  role                 MemberRole @default(BARBER)
+  active               Boolean    @default(true)
+  /// Comissão em % sobre o valor pago (já com desconto) de serviços e de produtos vendidos
+  serviceCommissionPct Int        @default(0) @map("service_commission_pct")
+  productCommissionPct Int        @default(0) @map("product_commission_pct")
+  createdAt            DateTime   @default(now()) @map("created_at") @db.Timestamptz(3)
 
   tenant                 Tenant                  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   user                   User                    @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -119,6 +124,8 @@ model Membership {
   bookings               Booking[]
   stockMovements         StockMovement[]
   refreshTokens          RefreshToken[]
+  orders                 Order[]
+  registersOpened        CashRegister[]
 
   @@unique([tenantId, userId])
   @@map("memberships")
@@ -158,6 +165,7 @@ model Client {
 
   tenant   Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   bookings Booking[]
+  orders   Order[]
 
   @@unique([tenantId, phone])
   @@map("clients")
@@ -174,9 +182,10 @@ model Service {
   imageUrl        String? @map("image_url")
   sortOrder       Int     @default(0) @map("sort_order")
 
-  tenant   Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  barbers  BarberService[]
-  bookings Booking[]
+  tenant     Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  barbers    BarberService[]
+  bookings   Booking[]
+  orderItems OrderItem[]
 
   @@index([tenantId, sortOrder])
   @@map("services")
@@ -247,6 +256,7 @@ model Booking {
   barber        Membership     @relation(fields: [barberId], references: [id])
   service       Service        @relation(fields: [serviceId], references: [id])
   notifications Notification[]
+  order         Order?
 
   @@index([barberId, startAt])
   @@index([tenantId, startAt])
@@ -268,6 +278,7 @@ model Product {
 
   tenant         Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   stockMovements StockMovement[]
+  orderItems     OrderItem[]
 
   @@index([tenantId])
   @@map("products")
@@ -303,4 +314,134 @@ model Notification {
 
   @@index([status, createdAt])
   @@map("notifications")
+}
+
+// =============================================
+// Fase 2 — Comanda, caixa e comissões
+// =============================================
+
+enum PaymentMethod {
+  PIX
+  CREDIT
+  DEBIT
+  CASH
+}
+
+enum OrderStatus {
+  PAID
+  VOIDED
+}
+
+enum OrderItemKind {
+  SERVICE
+  PRODUCT
+}
+
+enum CashMovementType {
+  DEPOSIT // suprimento (entrou dinheiro no caixa sem venda, ex.: troco)
+  WITHDRAWAL // sangria (saiu dinheiro do caixa)
+}
+
+/// Comanda: o que foi feito/vendido e como foi pago. Depois de fechada não muda;
+/// correção = estorno (status VOIDED) + nova comanda (RN18).
+model Order {
+  id            String      @id @default(uuid())
+  tenantId      String      @map("tenant_id")
+  registerId    String      @map("register_id")
+  bookingId     String?     @unique @map("booking_id")
+  clientId      String?     @map("client_id")
+  barberId      String?     @map("barber_id") // profissional que atendeu (comissão e gorjeta)
+  subtotalCents Int         @map("subtotal_cents")
+  discountCents Int         @default(0) @map("discount_cents")
+  tipCents      Int         @default(0) @map("tip_cents")
+  totalCents    Int         @map("total_cents") // subtotal - desconto + gorjeta = soma dos pagamentos
+  status        OrderStatus @default(PAID)
+  createdById   String      @map("created_by_id")
+  voidReason    String?     @map("void_reason")
+  voidedById    String?     @map("voided_by_id")
+  voidedAt      DateTime?   @map("voided_at") @db.Timestamptz(3)
+  createdAt     DateTime    @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  tenant   Tenant       @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  register CashRegister @relation(fields: [registerId], references: [id])
+  booking  Booking?     @relation(fields: [bookingId], references: [id])
+  client   Client?      @relation(fields: [clientId], references: [id])
+  barber   Membership?  @relation(fields: [barberId], references: [id])
+  items    OrderItem[]
+  payments Payment[]
+
+  @@index([tenantId, createdAt])
+  @@index([registerId])
+  @@index([barberId, createdAt])
+  @@map("orders")
+}
+
+model OrderItem {
+  id               String        @id @default(uuid())
+  orderId          String        @map("order_id")
+  kind             OrderItemKind
+  serviceId        String?       @map("service_id")
+  productId        String?       @map("product_id")
+  description      String
+  quantity         Int
+  unitPriceCents   Int           @map("unit_price_cents")
+  /// Valor da linha já com a parte proporcional do desconto (base da comissão, RN19)
+  totalCents       Int           @map("total_cents")
+  commissionCents  Int           @default(0) @map("commission_cents")
+  commissionPaidAt DateTime?     @map("commission_paid_at") @db.Timestamptz(3)
+
+  order   Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  service Service? @relation(fields: [serviceId], references: [id])
+  product Product? @relation(fields: [productId], references: [id])
+
+  @@index([orderId])
+  @@map("order_items")
+}
+
+model Payment {
+  id          String        @id @default(uuid())
+  orderId     String        @map("order_id")
+  method      PaymentMethod
+  amountCents Int           @map("amount_cents")
+
+  order Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  @@index([orderId])
+  @@map("payments")
+}
+
+/// Caixa do dia. Só um aberto por barbearia (índice parcial na migration).
+model CashRegister {
+  id               String    @id @default(uuid())
+  tenantId         String    @map("tenant_id")
+  openedById       String    @map("opened_by_id")
+  openingCents     Int       @map("opening_cents")
+  openedAt         DateTime  @default(now()) @map("opened_at") @db.Timestamptz(3)
+  closedById       String?   @map("closed_by_id")
+  closedAt         DateTime? @map("closed_at") @db.Timestamptz(3)
+  /// Dinheiro contado no fechamento; a diferença para o esperado aparece no relatório
+  countedCashCents Int?      @map("counted_cash_cents")
+  notes            String?
+
+  tenant    Tenant         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  openedBy  Membership     @relation(fields: [openedById], references: [id])
+  orders    Order[]
+  movements CashMovement[]
+
+  @@index([tenantId, openedAt])
+  @@map("cash_registers")
+}
+
+model CashMovement {
+  id           String           @id @default(uuid())
+  registerId   String           @map("register_id")
+  membershipId String           @map("membership_id")
+  type         CashMovementType
+  amountCents  Int              @map("amount_cents")
+  reason       String
+  createdAt    DateTime         @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  register CashRegister @relation(fields: [registerId], references: [id], onDelete: Cascade)
+
+  @@map("cash_movements")
 }

@@ -15,6 +15,8 @@ const publicSelect = {
 const staffSelect = {
   id: true,
   role: true,
+  serviceCommissionPct: true,
+  productCommissionPct: true,
   active: true,
   createdAt: true,
   user: { select: { id: true, name: true, email: true, phone: true, avatarUrl: true } },
@@ -61,7 +63,9 @@ export const barberService = {
     const id = await prisma.$transaction(async (tx) => {
       if (data.serviceIds?.length) await assertServicesInTenant(tx, tenantId, data.serviceIds);
       const user = await tx.user.create({ data: { name: data.name, email, passwordHash, phone: data.phone, avatarUrl: data.avatarUrl } });
-      const m = await tx.membership.create({ data: { tenantId, userId: user.id, role: data.role } });
+      const m = await tx.membership.create({
+        data: { tenantId, userId: user.id, role: data.role, serviceCommissionPct: data.serviceCommissionPct, productCommissionPct: data.productCommissionPct },
+      });
       if (data.serviceIds?.length) {
         await tx.barberService.createMany({ data: data.serviceIds.map((serviceId) => ({ membershipId: m.id, serviceId })) });
       }
@@ -73,13 +77,16 @@ export const barberService = {
   /** `managed` = quem chama é dono/gerente; o próprio barbeiro só altera o perfil. */
   async update(tenantId: string, id: string, data: UpdateBarberInput, managed: boolean) {
     const m = await getBarber(tenantId, id);
-    if (!managed && (data.active !== undefined || data.serviceIds !== undefined || data.role !== undefined)) {
-      throw new HttpError(403, 'Somente o dono ou gerente altera serviços, papel e status', 'FORBIDDEN');
+    if (!managed && (data.active !== undefined || data.serviceIds !== undefined || data.role !== undefined || data.serviceCommissionPct !== undefined || data.productCommissionPct !== undefined)) {
+      throw new HttpError(403, 'Somente o dono ou gerente altera serviços, papel, comissão e status', 'FORBIDDEN');
     }
 
     await prisma.$transaction(async (tx) => {
       await tx.user.update({ where: { id: m.userId }, data: { name: data.name, phone: data.phone, avatarUrl: data.avatarUrl } });
-      await tx.membership.update({ where: { id }, data: { active: data.active, role: data.role } });
+      await tx.membership.update({
+        where: { id },
+        data: { active: data.active, role: data.role, serviceCommissionPct: data.serviceCommissionPct, productCommissionPct: data.productCommissionPct },
+      });
 
       if (data.serviceIds) {
         await assertServicesInTenant(tx, tenantId, data.serviceIds);

@@ -1,6 +1,7 @@
 import { z } from 'zod';
 
 const role = z.enum(['OWNER', 'MANAGER', 'RECEPTIONIST', 'BARBER']);
+const pct = z.number().int().min(0).max(100);
 
 export const createBarberSchema = z.object({
   name: z.string().trim().min(2).max(100),
@@ -10,6 +11,8 @@ export const createBarberSchema = z.object({
   avatarUrl: z.string().url().optional(),
   role: role.default('BARBER'),
   serviceIds: z.array(z.string().uuid()).optional(),
+  serviceCommissionPct: pct.optional(),
+  productCommissionPct: pct.optional(),
 });
 
 export const updateBarberSchema = z.object({
@@ -19,6 +22,8 @@ export const updateBarberSchema = z.object({
   active: z.boolean().optional(),
   role: role.optional(),
   serviceIds: z.array(z.string().uuid()).optional(),
+  serviceCommissionPct: pct.optional(),
+  productCommissionPct: pct.optional(),
 });
 
 export type CreateBarberInput = z.infer<typeof createBarberSchema>;
