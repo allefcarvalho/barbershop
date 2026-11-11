@@ -1,48 +1,37 @@
-// =============================================
-// Barbearia Vikings — Error Handler Middleware
-// =============================================
-
 import { Request, Response, NextFunction } from 'express';
 import { ZodError } from 'zod';
+import { Prisma } from '@prisma/client';
+import { HttpError } from '../utils/apiResponse';
+import { isProd } from '../config/env';
 
-export function errorHandler(
-  err: Error,
-  _req: Request,
-  res: Response,
-  _next: NextFunction,
-) {
-  console.error(`[ERROR] ${err.message}`, err.stack);
+export function errorHandler(err: Error, _req: Request, res: Response, _next: NextFunction) {
+  if (err instanceof HttpError) {
+    return res.status(err.statusCode).json({ success: false, message: err.message, code: err.code });
+  }
 
-  // Zod validation errors
   if (err instanceof ZodError) {
-    const formatted: Record<string, string[]> = {};
-    err.errors.forEach((e) => {
-      const path = e.path.join('.');
-      if (!formatted[path]) formatted[path] = [];
-      formatted[path].push(e.message);
-    });
-
     return res.status(422).json({
       success: false,
       message: 'Erro de validação',
-      errors: formatted,
+      code: 'VALIDATION',
+      errors: err.flatten().fieldErrors,
     });
   }
 
-  // Prisma known errors
-  if (err.name === 'PrismaClientKnownRequestError') {
-    return res.status(409).json({
-      success: false,
-      message: 'Conflito de dados — registro já existe ou referência inválida',
-    });
+  if (err instanceof Prisma.PrismaClientKnownRequestError) {
+    if (err.code === 'P2002') return res.status(409).json({ success: false, message: 'Registro já existe', code: 'DUPLICATE' });
+    if (err.code === 'P2025') return res.status(404).json({ success: false, message: 'Registro não encontrado', code: 'NOT_FOUND' });
   }
 
-  // Default
-  const status = (err as any).statusCode || 500;
-  return res.status(status).json({
+  // JSON malformado no body
+  if ((err as any).type === 'entity.parse.failed') {
+    return res.status(400).json({ success: false, message: 'JSON inválido', code: 'BAD_JSON' });
+  }
+
+  console.error('[ERROR]', err);
+  return res.status(500).json({
     success: false,
-    message: process.env.NODE_ENV === 'production'
-      ? 'Erro interno do servidor'
-      : err.message,
+    message: isProd ? 'Erro interno do servidor' : err.message,
+    code: 'INTERNAL',
   });
 }

@@ -1,46 +1,15 @@
-// =============================================
-// Barbearia Vikings — Server Entrypoint
-// =============================================
-
 import { app } from './app';
 import { env } from './config/env';
 import { prisma } from './config/database';
 
-const PORT = parseInt(env.PORT, 10);
+const server = app.listen(env.PORT, () => console.log(`✅ API em http://localhost:${env.PORT}/api (${env.NODE_ENV})`));
 
-async function bootstrap() {
-  try {
-    // Test database connection
-    await prisma.$connect();
-    console.log('✅ Database connected');
-
-    app.listen(PORT, () => {
-      console.log(`
-╔══════════════════════════════════════════╗
-║       🪓  BARBEARIA VIKINGS API  🪓       ║
-╠══════════════════════════════════════════╣
-║  Server:  http://localhost:${PORT}          ║
-║  Env:     ${env.NODE_ENV.padEnd(28)}  ║
-║  Health:  http://localhost:${PORT}/api/health║
-╚══════════════════════════════════════════╝
-      `);
+// Encerramento gracioso: termina requisições em andamento antes de sair (deploy sem derrubar ninguém).
+for (const signal of ['SIGINT', 'SIGTERM'] as const) {
+  process.on(signal, () => {
+    server.close(async () => {
+      await prisma.$disconnect();
+      process.exit(0);
     });
-  } catch (error) {
-    console.error('❌ Failed to start server:', error);
-    process.exit(1);
-  }
+  });
 }
-
-// Graceful shutdown
-process.on('SIGINT', async () => {
-  console.log('\n🔄 Shutting down gracefully...');
-  await prisma.$disconnect();
-  process.exit(0);
-});
-
-process.on('SIGTERM', async () => {
-  await prisma.$disconnect();
-  process.exit(0);
-});
-
-bootstrap();

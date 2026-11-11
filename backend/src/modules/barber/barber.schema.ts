@@ -1,24 +1,23 @@
-// =============================================
-// Barbearia Vikings — Barber Zod Schemas
-// =============================================
-
 import { z } from 'zod';
 
+const role = z.enum(['OWNER', 'MANAGER', 'RECEPTIONIST', 'BARBER']);
+
 export const createBarberSchema = z.object({
-  name: z.string().min(2, 'Nome deve ter no mínimo 2 caracteres'),
-  email: z.string().email('Email inválido'),
-  password: z.string().min(6, 'Senha deve ter no mínimo 6 caracteres'),
-  phone: z.string().min(8, 'Telefone inválido'),
+  name: z.string().trim().min(2).max(100),
+  email: z.string().email(),
+  password: z.string().min(8, 'Senha deve ter no mínimo 8 caracteres').max(128),
+  phone: z.string().min(8).max(30).optional(),
   avatarUrl: z.string().url().optional(),
+  role: role.default('BARBER'),
   serviceIds: z.array(z.string().uuid()).optional(),
 });
 
 export const updateBarberSchema = z.object({
-  name: z.string().min(2).optional(),
-  email: z.string().email().optional(),
-  phone: z.string().min(8).optional(),
+  name: z.string().trim().min(2).max(100).optional(),
+  phone: z.string().min(8).max(30).optional(),
   avatarUrl: z.string().url().nullable().optional(),
   active: z.boolean().optional(),
+  role: role.optional(),
   serviceIds: z.array(z.string().uuid()).optional(),
 });
 

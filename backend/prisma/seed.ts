@@ -1,260 +1,84 @@
-// =============================================
-// Barbearia Vikings — Prisma Seed
-// =============================================
-
-import { PrismaClient, UserRole } from '@prisma/client';
+// Dados de desenvolvimento: barbearia Vikings (tenant 1). Senhas são só para ambiente local.
+import { PrismaClient, MemberRole } from '@prisma/client';
 import bcrypt from 'bcryptjs';
 
 const prisma = new PrismaClient();
 
+async function member(tenantId: string, name: string, email: string, password: string, role: MemberRole) {
+  const user = await prisma.user.upsert({
+    where: { email },
+    update: {},
+    create: { name, email, passwordHash: await bcrypt.hash(password, 12) },
+  });
+  return prisma.membership.upsert({
+    where: { tenantId_userId: { tenantId, userId: user.id } },
+    update: {},
+    create: { tenantId, userId: user.id, role },
+  });
+}
+
 async function main() {
-  console.log('🌱 Seeding database...');
-
-  // ===== Create Admin =====
-  const adminPassword = await bcrypt.hash('admin123', 12);
-  const admin = await prisma.user.upsert({
-    where: { email: 'admin@vikinges.com' },
+  const tenant = await prisma.tenant.upsert({
+    where: { slug: 'vikings' },
     update: {},
-    create: {
-      name: 'Administrador',
-      email: 'admin@vikinges.com',
-      passwordHash: adminPassword,
-      role: UserRole.ADMIN,
-      phone: '(11) 99999-0000',
-      active: true,
-    },
-  });
-  console.log(`✅ Admin created: ${admin.email}`);
-
-  // ===== Create Barbers =====
-  const barberPassword = await bcrypt.hash('barber123', 12);
-
-  const barber1 = await prisma.user.upsert({
-    where: { email: 'ragnar@vikinges.com' },
-    update: {},
-    create: {
-      name: 'Ragnar Lothbrok',
-      email: 'ragnar@vikinges.com',
-      passwordHash: barberPassword,
-      role: UserRole.BARBER,
-      phone: '(11) 99999-0001',
-      active: true,
-    },
+    create: { slug: 'vikings', name: 'Barbearia Vikings' },
   });
 
-  const barber2 = await prisma.user.upsert({
-    where: { email: 'bjorn@vikinges.com' },
-    update: {},
-    create: {
-      name: 'Bjorn Ironside',
-      email: 'bjorn@vikinges.com',
-      passwordHash: barberPassword,
-      role: UserRole.BARBER,
-      phone: '(11) 99999-0002',
-      active: true,
-    },
-  });
+  await member(tenant.id, 'Administrador', 'admin@vikinges.com', 'admin123', 'OWNER');
+  const barbers = [
+    await member(tenant.id, 'Ragnar Lothbrok', 'ragnar@vikinges.com', 'barber123', 'BARBER'),
+    await member(tenant.id, 'Bjorn Ironside', 'bjorn@vikinges.com', 'barber123', 'BARBER'),
+    await member(tenant.id, 'Ivar, o Desossado', 'ivar@vikinges.com', 'barber123', 'BARBER'),
+  ];
 
-  const barber3 = await prisma.user.upsert({
-    where: { email: 'ivar@vikinges.com' },
-    update: {},
-    create: {
-      name: 'Ivar, o Desossado',
-      email: 'ivar@vikinges.com',
-      passwordHash: barberPassword,
-      role: UserRole.BARBER,
-      phone: '(11) 99999-0003',
-      active: true,
-    },
-  });
-
-  console.log(`✅ Barbers created: ${barber1.name}, ${barber2.name}, ${barber3.name}`);
-
-  // ===== Create Services =====
-  const services = await Promise.all([
-    prisma.service.upsert({
-      where: { id: 'svc-corte' },
-      update: {},
-      create: {
-        id: 'svc-corte',
-        name: 'Corte de Cabelo',
-        description: 'Corte masculino profissional com acabamento perfeito',
-        price: 45.0,
-        durationMinutes: 35,
-        sortOrder: 1,
-      },
-    }),
-    prisma.service.upsert({
-      where: { id: 'svc-barba' },
-      update: {},
-      create: {
-        id: 'svc-barba',
-        name: 'Barba',
-        description: 'Aparar e modelar barba com navalha e toalha quente',
-        price: 35.0,
-        durationMinutes: 35,
-        sortOrder: 2,
-      },
-    }),
-    prisma.service.upsert({
-      where: { id: 'svc-corte-barba' },
-      update: { durationMinutes: 60 },
-      create: {
-        id: 'svc-corte-barba',
-        name: 'Corte + Barba',
-        description: 'Combo completo de corte de cabelo e barba',
-        price: 70.0,
-        durationMinutes: 60,
-        sortOrder: 3,
-      },
-    }),
-    prisma.service.upsert({
-      where: { id: 'svc-sobrancelha' },
-      update: {},
-      create: {
-        id: 'svc-sobrancelha',
-        name: 'Design de Sobrancelha',
-        description: 'Alinhamento e design personalizado da sobrancelha',
-        price: 20.0,
-        durationMinutes: 35,
-        sortOrder: 4,
-      },
-    }),
-    prisma.service.upsert({
-      where: { id: 'svc-pigmentacao' },
-      update: {},
-      create: {
-        id: 'svc-pigmentacao',
-        name: 'Pigmentação Capilar',
-        description: 'Pigmentação para cobertura de falhas e calvície',
-        price: 120.0,
-        durationMinutes: 35,
-        sortOrder: 5,
-      },
-    }),
-  ]);
-  console.log(`✅ Services created: ${services.length} services`);
-
-  // ===== Associate Barbers with Services =====
-  const barbers = [barber1, barber2, barber3];
-  for (const barber of barbers) {
-    for (const service of services) {
-      await prisma.barberService.upsert({
-        where: {
-          userId_serviceId: {
-            userId: barber.id,
-            serviceId: service.id,
-          },
-        },
-        update: {},
-        create: {
-          userId: barber.id,
-          serviceId: service.id,
-        },
-      });
-    }
+  if ((await prisma.service.count({ where: { tenantId: tenant.id } })) === 0) {
+    await prisma.service.createMany({
+      data: [
+        { name: 'Corte de Cabelo', description: 'Corte masculino profissional com acabamento perfeito', priceCents: 4500, durationMinutes: 35, sortOrder: 1 },
+        { name: 'Barba', description: 'Aparar e modelar barba com navalha e toalha quente', priceCents: 3500, durationMinutes: 35, sortOrder: 2 },
+        { name: 'Corte + Barba', description: 'Combo completo de corte de cabelo e barba', priceCents: 7000, durationMinutes: 60, sortOrder: 3 },
+        { name: 'Design de Sobrancelha', description: 'Alinhamento e design personalizado da sobrancelha', priceCents: 2000, durationMinutes: 35, sortOrder: 4 },
+        { name: 'Pigmentação Capilar', description: 'Pigmentação para cobertura de falhas e calvície', priceCents: 12000, durationMinutes: 35, sortOrder: 5 },
+      ].map((s) => ({ ...s, tenantId: tenant.id })),
+    });
   }
-  console.log('✅ Barber-Service associations created');
+  const services = await prisma.service.findMany({ where: { tenantId: tenant.id } });
 
-  // ===== Create Availability (Mon-Sat, 9:00-18:00) =====
-  for (const barber of barbers) {
-    for (let day = 1; day <= 6; day++) {
-      // 1=Monday to 6=Saturday
-      await prisma.availability.upsert({
-        where: {
-          userId_dayOfWeek: {
-            userId: barber.id,
-            dayOfWeek: day,
-          },
-        },
-        update: {},
-        create: {
-          userId: barber.id,
-          dayOfWeek: day,
-          startTime: '09:00',
-          endTime: '18:00',
-          active: true,
-        },
-      });
-    }
+  for (const b of barbers) {
+    await prisma.barberService.createMany({
+      data: services.map((s) => ({ membershipId: b.id, serviceId: s.id })),
+      skipDuplicates: true,
+    });
+    await prisma.availability.createMany({
+      data: [1, 2, 3, 4, 5, 6].map((dayOfWeek) => ({ membershipId: b.id, dayOfWeek, startTime: '09:00', endTime: '18:00' })),
+      skipDuplicates: true,
+    });
   }
-  console.log('✅ Availability schedules created (Mon-Sat, 09:00-18:00)');
 
-  // ===== Create Sample Clients =====
-  const client1 = await prisma.client.upsert({
-    where: { phone: '(11) 98888-0001' },
-    update: {},
-    create: {
-      name: 'João Silva',
-      phone: '(11) 98888-0001',
-      email: 'joao@email.com',
-      totalBookings: 5,
-      isRecurring: true,
-    },
+  await prisma.client.createMany({
+    data: [
+      { tenantId: tenant.id, name: 'João Silva', phone: '+5511988880001', email: 'joao@email.com', totalBookings: 5, isRecurring: true },
+      { tenantId: tenant.id, name: 'Pedro Santos', phone: '+5511988880002', email: 'pedro@email.com', totalBookings: 1 },
+    ],
+    skipDuplicates: true,
   });
 
-  const client2 = await prisma.client.upsert({
-    where: { phone: '(11) 98888-0002' },
-    update: {},
-    create: {
-      name: 'Pedro Santos',
-      phone: '(11) 98888-0002',
-      email: 'pedro@email.com',
-      totalBookings: 1,
-      isRecurring: false,
-    },
-  });
-  console.log(`✅ Clients created: ${client1.name}, ${client2.name}`);
+  if ((await prisma.product.count({ where: { tenantId: tenant.id } })) === 0) {
+    await prisma.product.createMany({
+      data: [
+        { name: 'Pomada Modeladora Viking', description: 'Pomada efeito matte com fixação forte', priceCents: 4500, stockQuantity: 20, stockMin: 5 },
+        { name: 'Óleo para Barba', description: 'Óleo hidratante com aroma amadeirado', priceCents: 5500, stockQuantity: 15, stockMin: 3 },
+        { name: 'Shampoo 3 em 1', description: 'Cabelo, barba e corpo em um só produto', priceCents: 3500, stockQuantity: 30, stockMin: 10 },
+      ].map((p) => ({ ...p, tenantId: tenant.id })),
+    });
+  }
 
-  // ===== Create Sample Products =====
-  await Promise.all([
-    prisma.product.upsert({
-      where: { id: 'prod-pomada' },
-      update: {},
-      create: {
-        id: 'prod-pomada',
-        name: 'Pomada Modeladora Viking',
-        description: 'Pomada efeito matte com fixação forte',
-        price: 45.0,
-        stockQuantity: 20,
-        stockMin: 5,
-      },
-    }),
-    prisma.product.upsert({
-      where: { id: 'prod-oleo' },
-      update: {},
-      create: {
-        id: 'prod-oleo',
-        name: 'Óleo para Barba',
-        description: 'Óleo hidratante com aroma amadeirado',
-        price: 55.0,
-        stockQuantity: 15,
-        stockMin: 3,
-      },
-    }),
-    prisma.product.upsert({
-      where: { id: 'prod-shampoo' },
-      update: {},
-      create: {
-        id: 'prod-shampoo',
-        name: 'Shampoo 3 em 1',
-        description: 'Cabelo, barba e corpo em um só produto',
-        price: 35.0,
-        stockQuantity: 30,
-        stockMin: 10,
-      },
-    }),
-  ]);
-  console.log('✅ Products created');
-
-  console.log('\n🎉 Seed completed successfully!');
+  console.log('🌱 Seed concluído: tenant "vikings", login admin@vikinges.com / admin123');
 }
 
 main()
   .catch((e) => {
-    console.error('❌ Seed error:', e);
+    console.error(e);
     process.exit(1);
   })
-  .finally(async () => {
-    await prisma.$disconnect();
-  });
+  .finally(() => prisma.$disconnect());

@@ -1,82 +1,55 @@
-// =============================================
-// Barbearia Vikings — Client Service
-// =============================================
-
+import { Prisma } from '@prisma/client';
 import { prisma } from '../../config/database';
+import { HttpError } from '../../utils/apiResponse';
+import type { AuthContext } from '../../middlewares/auth.middleware';
 import type { UpdateClientInput, ClientFiltersInput } from './client.schema';
 
-export class ClientService {
-  async findAll(filters: ClientFiltersInput) {
-    const where: any = {};
+/** Escopo de visibilidade: barbeiro só enxerga clientes que já atendeu/vai atender. */
+function scope(auth: AuthContext): Prisma.ClientWhereInput {
+  return {
+    tenantId: auth.tenantId,
+    ...(auth.role === 'BARBER' ? { bookings: { some: { barberId: auth.membershipId } } } : {}),
+  };
+}
 
-    if (filters.search) {
+export const clientService = {
+  async list(auth: AuthContext, f: ClientFiltersInput) {
+    const where: Prisma.ClientWhereInput = { ...scope(auth) };
+    if (f.search) {
+      const digits = f.search.replace(/\D/g, '');
       where.OR = [
-        { name: { contains: filters.search, mode: 'insensitive' } },
-        { phone: { contains: filters.search } },
-        { email: { contains: filters.search, mode: 'insensitive' } },
+        { name: { contains: f.search, mode: 'insensitive' } },
+        ...(digits.length >= 4 ? [{ phone: { contains: digits } }] : []),
+        { email: { contains: f.search, mode: 'insensitive' } },
       ];
     }
-
-    if (filters.recurring !== undefined) {
-      where.isRecurring = filters.recurring;
-    }
+    if (f.recurring !== undefined) where.isRecurring = f.recurring;
 
     const [clients, total] = await Promise.all([
-      prisma.client.findMany({
-        where,
-        orderBy: { createdAt: 'desc' },
-        skip: (filters.page - 1) * filters.pageSize,
-        take: filters.pageSize,
-      }),
+      prisma.client.findMany({ where, orderBy: { createdAt: 'desc' }, skip: (f.page - 1) * f.pageSize, take: f.pageSize }),
       prisma.client.count({ where }),
     ]);
+    return { clients, total, page: f.page, pageSize: f.pageSize };
+  },
 
-    return { clients, total, page: filters.page, pageSize: filters.pageSize };
-  }
-
-  async findById(id: string) {
-    const client = await prisma.client.findUnique({
-      where: { id },
+  async get(auth: AuthContext, id: string) {
+    const client = await prisma.client.findFirst({
+      where: { id, ...scope(auth) },
       include: {
         bookings: {
-          include: {
-            user: { select: { id: true, name: true } },
-            service: { select: { id: true, name: true, price: true } },
-          },
-          orderBy: { startTime: 'desc' },
+          where: auth.role === 'BARBER' ? { barberId: auth.membershipId } : {},
+          include: { barber: { select: { id: true, user: { select: { name: true } } } }, service: { select: { id: true, name: true } } },
+          orderBy: { startAt: 'desc' },
           take: 20,
         },
       },
     });
-
-    if (!client) {
-      throw Object.assign(new Error('Cliente não encontrado'), { statusCode: 404 });
-    }
-
+    if (!client) throw new HttpError(404, 'Cliente não encontrado', 'NOT_FOUND');
     return client;
-  }
+  },
 
-  async findByPhone(phone: string) {
-    const client = await prisma.client.findUnique({
-      where: { phone },
-      include: {
-        bookings: {
-          orderBy: { startTime: 'desc' },
-          take: 5,
-          include: {
-            service: { select: { name: true } },
-          },
-        },
-      },
-    });
-
-    return client;
-  }
-
-  async update(id: string, data: UpdateClientInput) {
-    await this.findById(id);
+  async update(auth: AuthContext, id: string, data: UpdateClientInput) {
+    await this.get(auth, id);
     return prisma.client.update({ where: { id }, data });
-  }
-}
-
-export const clientService = new ClientService();
+  },
+};

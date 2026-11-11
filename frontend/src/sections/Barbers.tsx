@@ -9,9 +9,11 @@ import { SectionTitle } from '../components/common/SectionTitle';
 import { GridSkeleton } from '../components/common/LoadingSkeleton';
 import { ErrorState } from '../components/common/ErrorState';
 import { useBarbers } from '../hooks/useBarbers';
+import { useServices } from '../hooks/useServices';
 
 export function Barbers() {
   const { data: barbers, isLoading, error, refetch } = useBarbers();
+  const { data: services } = useServices();
 
   return (
     <Section id="barbers" variant="dark">
@@ -60,17 +62,17 @@ export function Barbers() {
                     {barber.name}
                   </h3>
                   <p className="text-xs uppercase tracking-wider text-brand-400 font-body mb-4">
-                    {barber.role === 'ADMIN' ? 'Mestre Barbeiro' : 'Barbeiro'}
+                    Barbeiro
                   </p>
 
-                  {barber.services.length > 0 && (
+                  {barber.serviceIds.length > 0 && (
                     <div className="flex flex-wrap gap-2">
-                      {barber.services.slice(0, 3).map((bs) => (
+                      {services?.filter((s) => barber.serviceIds.includes(s.id)).slice(0, 3).map((s) => (
                         <span
-                          key={bs.service.id}
+                          key={s.id}
                           className="px-3 py-1 text-[10px] uppercase tracking-wider text-[#8A8680] bg-white/5 rounded-full border border-white/5 font-body"
                         >
-                          {bs.service.name}
+                          {s.name}
                         </span>
                       ))}
                     </div>

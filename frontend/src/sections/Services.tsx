@@ -4,6 +4,7 @@
 
 import { Link } from 'react-router-dom';
 import { Clock, ArrowRight, Scissors } from 'lucide-react';
+import { formatBRL } from '../utils/format';
 import { Section } from '../components/layout/Section';
 import { Container } from '../components/layout/Container';
 import { SectionTitle } from '../components/common/SectionTitle';
@@ -56,7 +57,7 @@ export function Services() {
                 <div className="flex items-center justify-between pt-4 border-t border-white/5">
                   <div className="flex items-center gap-4">
                     <span className="text-2xl font-display font-bold text-brand-400">
-                      R${service.price}
+                      {formatBRL(service.priceCents)}
                     </span>
                     <span className="flex items-center gap-1 text-xs text-[#5A5650] font-body">
                       <Clock className="w-3.5 h-3.5" />

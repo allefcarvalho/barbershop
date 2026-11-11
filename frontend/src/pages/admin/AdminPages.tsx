@@ -3,9 +3,11 @@
 // =============================================
 
 import { useState } from 'react';
-import { Calendar, Scissors, Package, Clock, User, AlertCircle } from 'lucide-react';
+import { Calendar, Scissors, Package, Clock, AlertCircle } from 'lucide-react';
 import { useQuery } from '@tanstack/react-query';
+import { format } from 'date-fns';
 import { api } from '../../config/api';
+import { formatBRL } from '../../utils/format';
 
 // ===== Shared loading / error components =====
 
@@ -37,16 +39,16 @@ function AdminError({ message, onRetry }: { message: string; onRetry: () => void
 
 interface BookingData {
   id: string;
-  startTime: string;
-  endTime: string;
+  startAt: string;
+  endAt: string;
   status: string;
   client: { name: string; phone: string };
-  user: { name: string };
-  service: { name: string; durationMinutes: number };
+  barber: { user: { name: string } };
+  service: { name: string };
 }
 
 export function AgendaPage() {
-  const [dateFilter] = useState(() => new Date().toISOString().split('T')[0]);
+  const [dateFilter] = useState(() => format(new Date(), 'yyyy-MM-dd'));
 
   const { data: bookings, isLoading, error, refetch } = useQuery<{ data: BookingData[]; total: number }>({
     queryKey: ['admin-bookings', dateFilter],
@@ -79,7 +81,7 @@ export function AgendaPage() {
       ) : (
         <div className="rounded-xl bg-panel border border-white/5 overflow-hidden divide-y divide-white/5">
           {items.map((booking) => {
-            const time = new Date(booking.startTime).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+            const time = new Date(booking.startAt).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
             const statusMap: Record<string, { label: string; className: string }> = {
               CONFIRMED: { label: 'Confirmado', className: 'bg-green-500/10 text-green-400 border-green-500/20' },
               PENDING: { label: 'Pendente', className: 'bg-yellow-500/10 text-yellow-400 border-yellow-500/20' },
@@ -94,7 +96,7 @@ export function AgendaPage() {
                 <span className="text-sm font-mono text-brand-400 w-14 shrink-0 font-body">{time}</span>
                 <div className="flex-1 min-w-0">
                   <p className="text-sm font-medium text-white font-body truncate">{booking.client.name}</p>
-                  <p className="text-xs text-[#5A5650] font-body">{booking.service.name} • {booking.user.name}</p>
+                  <p className="text-xs text-[#5A5650] font-body">{booking.service.name} • {booking.barber.user.name}</p>
                 </div>
                 <span className={`px-3 py-1 text-[10px] uppercase tracking-wider font-semibold rounded-full font-body border ${status.className}`}>
                   {status.label}
@@ -114,7 +116,7 @@ interface ServiceData {
   id: string;
   name: string;
   description: string;
-  price: number;
+  priceCents: number;
   durationMinutes: number;
   active: boolean;
   sortOrder: number;
@@ -124,7 +126,7 @@ export function ServicesPage() {
   const { data: services, isLoading, error, refetch } = useQuery<ServiceData[]>({
     queryKey: ['admin-services'],
     queryFn: async () => {
-      const res = await api.get('/services', { params: { active: 'false' } });
+      const res = await api.get('/services');
       return res.data.data;
     },
   });
@@ -159,7 +161,7 @@ export function ServicesPage() {
             <h4 className="text-sm font-display font-semibold text-white mb-1">{service.name}</h4>
             <p className="text-xs text-[#5A5650] font-body mb-3 line-clamp-2">{service.description}</p>
             <div className="flex items-center gap-3 pt-3 border-t border-white/5">
-              <span className="text-lg font-display font-bold text-brand-400">R${Number(service.price).toFixed(2)}</span>
+              <span className="text-lg font-display font-bold text-brand-400">{formatBRL(service.priceCents)}</span>
               <span className="flex items-center gap-1 text-xs text-[#5A5650] font-body">
                 <Clock className="w-3 h-3" />
                 {service.durationMinutes}min
@@ -178,7 +180,7 @@ interface ProductData {
   id: string;
   name: string;
   description: string;
-  price: number;
+  priceCents: number;
   stockQuantity: number;
   stockMin: number;
   active: boolean;
@@ -189,14 +191,8 @@ export function ProductsPage() {
   const { data: products, isLoading, error, refetch } = useQuery<ProductData[]>({
     queryKey: ['admin-products'],
     queryFn: async () => {
-      // Try authenticated route first, fall back to public
-      try {
-        const res = await api.get('/products');
-        return res.data.data;
-      } catch {
-        const res = await api.get('/products/public');
-        return res.data.data;
-      }
+      const res = await api.get('/products');
+      return res.data.data;
     },
   });
 
@@ -230,7 +226,7 @@ export function ProductsPage() {
               <h4 className="text-sm font-display font-semibold text-white mb-1">{product.name}</h4>
               <p className="text-xs text-[#5A5650] font-body mb-3 line-clamp-2">{product.description}</p>
               <div className="flex items-center justify-between pt-3 border-t border-white/5">
-                <span className="text-lg font-display font-bold text-brand-400">R${Number(product.price).toFixed(2)}</span>
+                <span className="text-lg font-display font-bold text-brand-400">{formatBRL(product.priceCents)}</span>
                 <span className={`text-xs font-body font-medium ${lowStock ? 'text-yellow-400' : 'text-[#5A5650]'}`}>
                   {product.stockQuantity} un.
                 </span>

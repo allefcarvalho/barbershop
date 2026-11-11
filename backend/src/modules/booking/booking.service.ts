@@ -1,314 +1,171 @@
-// =============================================
-// Barbearia Vikings — Booking Service
-// =============================================
-
+import { BookingStatus, Prisma, Tenant } from '@prisma/client';
 import { prisma } from '../../config/database';
-import { BookingStatus, NotificationType, NotificationChannel, NotificationStatus } from '@prisma/client';
-import { RECURRING_THRESHOLD, MAX_ADVANCE_DAYS, MIN_CANCEL_HOURS } from '@vikinges/shared';
-import { addMinutes, startOfDay, endOfDay } from '../../utils/timeSlots';
-import type { CreateBookingInput, UpdateBookingStatusInput, BookingFiltersInput } from './booking.schema';
+import { HttpError } from '../../utils/apiResponse';
+import { addMinutes, dayRangeUtc, zonedToUtc } from '../../utils/time';
+import { availabilityService } from '../availability/availability.service';
+import type { AuthContext } from '../../middlewares/auth.middleware';
+import type { CreateBookingInput, BookingFiltersInput } from './booking.schema';
 
-export class BookingService {
+const ACTIVE: BookingStatus[] = ['PENDING', 'CONFIRMED'];
+
+const TRANSITIONS: Record<BookingStatus, BookingStatus[]> = {
+  PENDING: ['CONFIRMED', 'CANCELLED'],
+  CONFIRMED: ['COMPLETED', 'CANCELLED', 'NO_SHOW'],
+  CANCELLED: [],
+  COMPLETED: [],
+  NO_SHOW: [],
+};
+
+const slotTaken = () => new HttpError(409, 'Este horário acabou de ser reservado. Escolha outro.', 'SLOT_TAKEN');
+
+/** Violação da constraint EXCLUDE "bookings_no_overlap" (SQLSTATE 23P01). */
+function isOverlapError(e: unknown) {
+  return e instanceof Error && /bookings_no_overlap|23P01/.test(e.message);
+}
+
+const listInclude = {
+  client: { select: { id: true, name: true, phone: true, isRecurring: true } },
+  barber: { select: { id: true, user: { select: { name: true } } } },
+  service: { select: { id: true, name: true } },
+} satisfies Prisma.BookingInclude;
+
+export const bookingService = {
   /**
-   * Create a booking with full conflict prevention using a transaction.
-   * This is the critical path — must prevent double-booking.
+   * Agendamento público. Duas barreiras contra double booking:
+   * 1) o horário precisa estar na lista do motor de slots (jornada, bloqueios, antecedência);
+   * 2) a constraint EXCLUDE no banco resolve a corrida entre requisições simultâneas.
    */
-  async create(data: CreateBookingInput) {
-    const startTime = new Date(data.startTime);
+  async create(tenant: Tenant, data: CreateBookingInput) {
+    const { date, time } = data;
+    const startAt = zonedToUtc(date, time, tenant.timezone);
 
-    // Validate: not in the past
-    if (startTime <= new Date()) {
-      throw Object.assign(new Error('Não é possível agendar em horários passados'), { statusCode: 400 });
+    const slots = await availabilityService.getSlots(tenant, data.barberId, date, data.serviceId);
+    if (!slots.includes(time)) {
+      throw new HttpError(409, 'Horário indisponível. Escolha outro.', 'SLOT_UNAVAILABLE');
     }
 
-    // Validate: not too far in the future
-    const maxDate = new Date();
-    maxDate.setDate(maxDate.getDate() + MAX_ADVANCE_DAYS);
-    if (startTime > maxDate) {
-      throw Object.assign(
-        new Error(`Agendamentos podem ser feitos com até ${MAX_ADVANCE_DAYS} dias de antecedência`),
-        { statusCode: 400 },
-      );
-    }
+    const service = await prisma.service.findUniqueOrThrow({ where: { id: data.serviceId } });
+    const endAt = addMinutes(startAt, service.durationMinutes);
 
-    // Get service duration
-    const service = await prisma.service.findUnique({ where: { id: data.serviceId } });
-    if (!service || !service.active) {
-      throw Object.assign(new Error('Serviço não encontrado ou inativo'), { statusCode: 404 });
-    }
+    try {
+      return await prisma.$transaction(async (tx) => {
+        // RN07: telefone identifica o cliente, mas o agendamento público NÃO sobrescreve dados existentes
+        // (senão qualquer um que soubesse o telefone trocaria nome/e-mail de outra pessoa).
+        const client = await tx.client.upsert({
+          where: { tenantId_phone: { tenantId: tenant.id, phone: data.clientPhone } },
+          update: {},
+          create: { tenantId: tenant.id, name: data.clientName, phone: data.clientPhone, email: data.clientEmail },
+        });
 
-    const endTime = addMinutes(startTime, service.durationMinutes);
+        const active = await tx.booking.count({
+          where: { clientId: client.id, status: { in: ACTIVE }, startAt: { gt: new Date() } },
+        });
+        if (active >= tenant.maxActiveBookingsPerPhone) {
+          throw new HttpError(409, 'Você já tem agendamentos em aberto. Cancele um para marcar outro.', 'TOO_MANY_ACTIVE');
+        }
 
-    // Verify barber exists and is active
-    const barber = await prisma.user.findUnique({ where: { id: data.barberId } });
-    if (!barber || !barber.active) {
-      throw Object.assign(new Error('Barbeiro não encontrado ou inativo'), { statusCode: 404 });
-    }
-
-    // Verify barber offers this service
-    const barberService = await prisma.barberService.findUnique({
-      where: {
-        userId_serviceId: {
-          userId: data.barberId,
-          serviceId: data.serviceId,
-        },
-      },
-    });
-    if (!barberService) {
-      throw Object.assign(
-        new Error('Este barbeiro não oferece o serviço selecionado'),
-        { statusCode: 400 },
-      );
-    }
-
-    // === TRANSACTION with conflict check ===
-    return prisma.$transaction(async (tx) => {
-      // Check for conflicting bookings (pessimistic approach)
-      const conflicting = await tx.booking.findFirst({
-        where: {
-          userId: data.barberId,
-          status: { in: [BookingStatus.PENDING, BookingStatus.CONFIRMED] },
-          OR: [
-            {
-              startTime: { lt: endTime },
-              endTime: { gt: startTime },
-            },
-          ],
-        },
-      });
-
-      if (conflicting) {
-        throw Object.assign(
-          new Error('Este horário já está reservado. Por favor, escolha outro.'),
-          { statusCode: 409 },
-        );
-      }
-
-      // Find or create client
-      let client = await tx.client.findUnique({
-        where: { phone: data.clientPhone },
-      });
-
-      if (client) {
-        // Update name if provided
-        client = await tx.client.update({
-          where: { id: client.id },
+        const booking = await tx.booking.create({
           data: {
-            name: data.clientName,
-            email: data.clientEmail || client.email,
+            tenantId: tenant.id,
+            clientId: client.id,
+            barberId: data.barberId,
+            serviceId: service.id,
+            startAt,
+            endAt,
+            status: 'CONFIRMED',
+            priceCents: service.priceCents,
+            durationMinutes: service.durationMinutes,
+            // Nome digitado diferente do cadastro fica registrado aqui para a equipe conferir.
+            notes: client.name !== data.clientName ? [`Nome informado: ${data.clientName}`, data.notes].filter(Boolean).join(' · ') : data.notes,
+          },
+          include: { barber: { select: { id: true, user: { select: { name: true } } } }, service: { select: { id: true, name: true } } },
+        });
+
+        await tx.notification.create({
+          data: {
+            bookingId: booking.id,
+            type: 'CONFIRMATION',
+            payload: JSON.stringify({ bookingId: booking.id, startAt, serviceName: service.name, barberName: booking.barber.user.name }),
           },
         });
-      } else {
-        client = await tx.client.create({
-          data: {
-            name: data.clientName,
-            phone: data.clientPhone,
-            email: data.clientEmail,
-          },
-        });
-      }
 
-      // Create booking
-      const booking = await tx.booking.create({
-        data: {
-          clientId: client.id,
-          userId: data.barberId,
-          serviceId: data.serviceId,
-          startTime,
-          endTime,
-          status: BookingStatus.CONFIRMED,
-          notes: data.notes,
-        },
-        include: {
-          client: true,
-          user: { select: { id: true, name: true, phone: true } },
-          service: true,
-        },
+        // Resposta pública: sem dados do cadastro do cliente.
+        return {
+          id: booking.id,
+          startAt: booking.startAt,
+          endAt: booking.endAt,
+          status: booking.status,
+          priceCents: booking.priceCents,
+          service: booking.service,
+          barber: { id: booking.barber.id, name: booking.barber.user.name },
+        };
       });
-
-      // Create notification record (prepared for WhatsApp)
-      await tx.notification.create({
-        data: {
-          bookingId: booking.id,
-          channel: NotificationChannel.INTERNAL,
-          type: NotificationType.CONFIRMATION,
-          status: NotificationStatus.PENDING,
-          payload: JSON.stringify({
-            clientName: client.name,
-            clientPhone: client.phone,
-            barberName: barber.name,
-            serviceName: service.name,
-            date: startTime.toISOString(),
-            duration: service.durationMinutes,
-          }),
-        },
-      });
-
-      return booking;
-    });
-  }
-
-  /**
-   * List bookings with filters and pagination.
-   */
-  async findAll(filters: BookingFiltersInput, userId?: string, userRole?: string) {
-    const where: any = {};
-
-    // Barbers can only see their own bookings
-    if (userRole === 'BARBER') {
-      where.userId = userId;
-    } else if (filters.barberId) {
-      where.userId = filters.barberId;
+    } catch (e) {
+      if (isOverlapError(e)) throw slotTaken();
+      throw e;
     }
+  },
 
-    if (filters.status) {
-      where.status = filters.status;
-    }
-
-    if (filters.date) {
-      const date = new Date(filters.date);
-      where.startTime = {
-        gte: startOfDay(date),
-        lte: endOfDay(date),
-      };
+  async findAll(auth: AuthContext, f: BookingFiltersInput) {
+    const where: Prisma.BookingWhereInput = { tenantId: auth.tenantId };
+    if (auth.role === 'BARBER') where.barberId = auth.membershipId; // barbeiro só vê os próprios
+    else if (f.barberId) where.barberId = f.barberId;
+    if (f.status) where.status = f.status;
+    if (f.date) {
+      const tenant = await prisma.tenant.findUniqueOrThrow({ where: { id: auth.tenantId } });
+      const { start, end } = dayRangeUtc(f.date, tenant.timezone);
+      where.startAt = { gte: start, lt: end };
     }
 
     const [bookings, total] = await Promise.all([
       prisma.booking.findMany({
         where,
-        include: {
-          client: { select: { id: true, name: true, phone: true, isRecurring: true } },
-          user: { select: { id: true, name: true } },
-          service: { select: { id: true, name: true, price: true } },
-        },
-        orderBy: { startTime: 'asc' },
-        skip: (filters.page - 1) * filters.pageSize,
-        take: filters.pageSize,
+        include: listInclude,
+        orderBy: { startAt: 'asc' },
+        skip: (f.page - 1) * f.pageSize,
+        take: f.pageSize,
       }),
       prisma.booking.count({ where }),
     ]);
+    return { bookings, total, page: f.page, pageSize: f.pageSize };
+  },
 
-    return { bookings, total, page: filters.page, pageSize: filters.pageSize };
-  }
-
-  /**
-   * Get a single booking by ID.
-   */
-  async findById(id: string) {
-    const booking = await prisma.booking.findUnique({
-      where: { id },
-      include: {
-        client: true,
-        user: { select: { id: true, name: true, phone: true, avatarUrl: true } },
-        service: true,
-        notifications: true,
-      },
+  async findById(auth: AuthContext, id: string) {
+    const booking = await prisma.booking.findFirst({
+      where: { id, tenantId: auth.tenantId, ...(auth.role === 'BARBER' ? { barberId: auth.membershipId } : {}) },
+      include: { ...listInclude, notifications: true },
     });
-
-    if (!booking) {
-      throw Object.assign(new Error('Agendamento não encontrado'), { statusCode: 404 });
-    }
-
+    if (!booking) throw new HttpError(404, 'Agendamento não encontrado', 'NOT_FOUND');
     return booking;
-  }
+  },
 
-  /**
-   * Update booking status with business rule validation.
-   */
-  async updateStatus(id: string, data: UpdateBookingStatusInput) {
-    const booking = await this.findById(id);
-
-    // Validate status transitions
-    const validTransitions: Record<string, string[]> = {
-      PENDING: ['CONFIRMED', 'CANCELLED'],
-      CONFIRMED: ['COMPLETED', 'CANCELLED', 'NO_SHOW'],
-      CANCELLED: [],
-      COMPLETED: [],
-      NO_SHOW: [],
-    };
-
-    if (!validTransitions[booking.status]?.includes(data.status)) {
-      throw Object.assign(
-        new Error(`Não é possível alterar de ${booking.status} para ${data.status}`),
-        { statusCode: 400 },
-      );
-    }
-
-    // Cancellation time check (for client-initiated cancellations)
-    if (data.status === 'CANCELLED') {
-      const hoursUntil = (booking.startTime.getTime() - Date.now()) / (1000 * 60 * 60);
-      if (hoursUntil < MIN_CANCEL_HOURS) {
-        throw Object.assign(
-          new Error(`Cancelamento permitido apenas até ${MIN_CANCEL_HOURS}h antes do horário`),
-          { statusCode: 400 },
-        );
-      }
+  /** Mudança de status pela equipe. Atualização condicional evita corrida entre dois cliques/usuários. */
+  async updateStatus(auth: AuthContext, id: string, status: BookingStatus) {
+    const booking = await this.findById(auth, id);
+    if (!TRANSITIONS[booking.status].includes(status)) {
+      throw new HttpError(400, `Não é possível alterar de ${booking.status} para ${status}`, 'INVALID_TRANSITION');
     }
 
     return prisma.$transaction(async (tx) => {
-      const updated = await tx.booking.update({
-        where: { id },
-        data: { status: data.status as BookingStatus },
-        include: {
-          client: true,
-          user: { select: { id: true, name: true } },
-          service: true,
-        },
-      });
+      const { count } = await tx.booking.updateMany({ where: { id, status: booking.status }, data: { status } });
+      if (count === 0) throw new HttpError(409, 'O agendamento foi alterado por outra pessoa. Recarregue.', 'STALE');
 
-      // If completed, update client stats
-      if (data.status === 'COMPLETED') {
+      if (status === 'COMPLETED') {
+        const tenant = await tx.tenant.findUniqueOrThrow({ where: { id: auth.tenantId } });
         const client = await tx.client.update({
           where: { id: booking.clientId },
-          data: {
-            totalBookings: { increment: 1 },
-            lastVisit: new Date(),
-          },
+          data: { totalBookings: { increment: 1 }, lastVisit: booking.startAt },
         });
-
-        // Auto-tag as recurring
-        if (client.totalBookings >= RECURRING_THRESHOLD && !client.isRecurring) {
-          await tx.client.update({
-            where: { id: client.id },
-            data: { isRecurring: true },
-          });
+        if (!client.isRecurring && client.totalBookings >= tenant.recurringThreshold) {
+          await tx.client.update({ where: { id: client.id }, data: { isRecurring: true } });
         }
       }
 
-      // Create cancellation notification
-      if (data.status === 'CANCELLED') {
-        await tx.notification.create({
-          data: {
-            bookingId: id,
-            channel: NotificationChannel.INTERNAL,
-            type: NotificationType.CANCELLATION,
-            status: NotificationStatus.PENDING,
-          },
-        });
+      if (status === 'CANCELLED') {
+        await tx.notification.create({ data: { bookingId: id, type: 'CANCELLATION' } });
       }
 
-      return updated;
+      return tx.booking.findUniqueOrThrow({ where: { id }, include: listInclude });
     });
-  }
-
-  /**
-   * Get barber's agenda for a specific day.
-   */
-  async getBarberDayAgenda(barberId: string, dateStr: string) {
-    const date = new Date(dateStr);
-    return prisma.booking.findMany({
-      where: {
-        userId: barberId,
-        startTime: { gte: startOfDay(date), lte: endOfDay(date) },
-        status: { in: [BookingStatus.PENDING, BookingStatus.CONFIRMED] },
-      },
-      include: {
-        client: { select: { id: true, name: true, phone: true, isRecurring: true } },
-        service: { select: { id: true, name: true } },
-      },
-      orderBy: { startTime: 'asc' },
-    });
-  }
-}
-
-export const bookingService = new BookingService();
+  },
+};

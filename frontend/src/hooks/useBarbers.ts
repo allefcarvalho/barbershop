@@ -1,19 +1,12 @@
-// =============================================
-// Barbearia Vikings — useBarbers Hook
-// =============================================
-
 import { useQuery } from '@tanstack/react-query';
 import { barberService } from '../services/barber.service';
 
+/** Dados públicos do barbeiro (sem e-mail/telefone da equipe). */
 export interface BarberData {
   id: string;
   name: string;
-  email: string;
-  phone: string;
-  role: string;
   avatarUrl: string | null;
-  active: boolean;
-  services: { service: { id: string; name: string } }[];
+  serviceIds: string[];
 }
 
 export function useBarbers(serviceId?: string) {

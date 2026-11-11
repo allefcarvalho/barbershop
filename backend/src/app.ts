@@ -1,19 +1,15 @@
-// =============================================
-// Barbearia Vikings — Express App Configuration
-// =============================================
-
 import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
 import morgan from 'morgan';
-import { env } from './config/env';
+import { env, isProd } from './config/env';
+import { prisma } from './config/database';
 import { errorHandler } from './middlewares/errorHandler';
 import { apiLimiter } from './middlewares/rateLimiter';
-import { prisma } from './config/database';
+import { authenticate, publicTenant } from './middlewares/auth.middleware';
 import { sendSuccess, sendError } from './utils/apiResponse';
-
-// Module Routes
 import { authRoutes } from './modules/auth/auth.routes';
+import { publicRoutes } from './modules/public.routes';
 import { serviceRoutes } from './modules/service/service.routes';
 import { barberRoutes } from './modules/barber/barber.routes';
 import { availabilityRoutes } from './modules/availability/availability.routes';
@@ -24,47 +20,41 @@ import { notificationRoutes } from './modules/notification/notification.routes';
 
 const app = express();
 
-// ===== Global Middlewares =====
+app.set('trust proxy', env.TRUST_PROXY); // IP real do cliente atrás do load balancer (rate limit correto)
+app.disable('x-powered-by');
 app.use(helmet());
-app.use(cors({
-  origin: env.CORS_ORIGIN,
-  credentials: true,
-}));
-app.use(express.json({ limit: '10mb' }));
-app.use(express.urlencoded({ extended: true }));
-app.use(morgan(env.NODE_ENV === 'production' ? 'combined' : 'dev'));
-app.use('/api', apiLimiter);
+app.use(cors({ origin: env.CORS_ORIGIN.split(','), credentials: true }));
+app.use(express.json({ limit: '100kb' }));
+if (env.NODE_ENV !== 'test') app.use(morgan(isProd ? 'combined' : 'dev'));
 
-// ===== Health Check =====
+// Liveness/readiness para o load balancer (fora do rate limit).
 app.get('/api/health', async (_req, res) => {
   try {
     await prisma.$queryRaw`SELECT 1`;
-    return sendSuccess(res, {
-      status: 'ok',
-      timestamp: new Date().toISOString(),
-      environment: env.NODE_ENV,
-    });
+    sendSuccess(res, { status: 'ok' });
   } catch {
-    return sendError(res, 'Database connection failed', 503);
+    sendError(res, 'Banco indisponível', 503);
   }
 });
 
-// ===== API Routes =====
-app.use('/api/auth', authRoutes);
-app.use('/api/services', serviceRoutes);
-app.use('/api/barbers', barberRoutes);
-app.use('/api/availability', availabilityRoutes);
-app.use('/api/bookings', bookingRoutes);
-app.use('/api/clients', clientRoutes);
-app.use('/api/products', productRoutes);
-app.use('/api/notifications', notificationRoutes);
+app.use('/api', apiLimiter);
 
-// ===== 404 Handler =====
-app.use('/api/*', (_req, res) => {
-  return sendError(res, 'Rota não encontrada', 404);
-});
+const v1 = express.Router();
+v1.use('/auth', authRoutes);
+v1.use('/public/:slug', publicTenant, publicRoutes);
 
-// ===== Error Handler (must be last) =====
+// Daqui para baixo: autenticado, tenant vem do token.
+v1.use(authenticate);
+v1.use('/services', serviceRoutes);
+v1.use('/barbers', barberRoutes);
+v1.use('/availability', availabilityRoutes);
+v1.use('/bookings', bookingRoutes);
+v1.use('/clients', clientRoutes);
+v1.use('/products', productRoutes);
+v1.use('/notifications', notificationRoutes);
+
+app.use('/api/v1', v1);
+app.use('/api', (_req, res) => sendError(res, 'Rota não encontrada', 404, 'NOT_FOUND'));
 app.use(errorHandler);
 
 export { app };

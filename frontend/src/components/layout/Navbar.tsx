@@ -22,9 +22,12 @@ export function Navbar() {
     return () => window.removeEventListener('scroll', handleScroll);
   }, []);
 
-  useEffect(() => {
+  // Fecha o menu mobile ao trocar de rota (ajuste de estado no render, sem efeito extra).
+  const [lastKey, setLastKey] = useState(location.key);
+  if (lastKey !== location.key) {
+    setLastKey(location.key);
     setIsOpen(false);
-  }, [location]);
+  }
 
   const handleNavClick = (href: string) => {
     if (href.startsWith('#') && isHome) {

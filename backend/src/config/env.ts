@@ -1,33 +1,25 @@
-// =============================================
-// Barbearia Vikings — Environment Config
-// =============================================
-
+import 'dotenv/config';
 import { z } from 'zod';
-import dotenv from 'dotenv';
-
-dotenv.config({ path: '../.env' });
 
 const envSchema = z.object({
-  PORT: z.string().default('3333'),
+  PORT: z.coerce.number().int().default(3333),
   NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
   DATABASE_URL: z.string().url(),
-  JWT_SECRET: z.string().min(10),
-  JWT_REFRESH_SECRET: z.string().min(10),
+  JWT_SECRET: z.string().min(32, 'JWT_SECRET precisa ter ao menos 32 caracteres'),
   JWT_EXPIRES_IN: z.string().default('15m'),
-  JWT_REFRESH_EXPIRES_IN: z.string().default('7d'),
+  REFRESH_TOKEN_DAYS: z.coerce.number().int().positive().default(7),
   CORS_ORIGIN: z.string().default('http://localhost:5173'),
-  TZ: z.string().default('America/Sao_Paulo'),
+  REDIS_URL: z.string().url().optional(),
+  /** Nº de proxies confiáveis à frente da API (load balancer). 0 = nenhum. */
+  TRUST_PROXY: z.coerce.number().int().min(0).default(0),
 });
 
 const parsed = envSchema.safeParse(process.env);
 
 if (!parsed.success) {
-  console.error('❌ Invalid environment variables:');
-  console.error(parsed.error.format());
+  console.error('❌ Variáveis de ambiente inválidas:', parsed.error.flatten().fieldErrors);
   process.exit(1);
 }
 
-// Set timezone at process level
-process.env.TZ = parsed.data.TZ;
-
 export const env = parsed.data;
+export const isProd = env.NODE_ENV === 'production';

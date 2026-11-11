@@ -2,7 +2,7 @@
 // Barbearia Vikings — Admin Dashboard Page (API)
 // =============================================
 
-import { Calendar, Users, Scissors, Package, TrendingUp, Clock, AlertCircle } from 'lucide-react';
+import { Calendar, Users, Scissors, Package, TrendingUp } from 'lucide-react';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '../../config/api';
 
@@ -14,16 +14,15 @@ interface ServiceData {
   active: boolean;
 }
 
-interface ProductPublic {
+interface ProductData {
   id: string;
   name: string;
-  price: number;
 }
 
-interface BarberData {
+interface MemberData {
   id: string;
-  name: string;
   active: boolean;
+  user: { name: string };
 }
 
 // ===== Dashboard Page =====
@@ -40,7 +39,7 @@ export function DashboardPage() {
   });
 
   // Fetch barbers (public)
-  const { data: barbers } = useQuery<BarberData[]>({
+  const { data: barbers } = useQuery<MemberData[]>({
     queryKey: ['dashboard-barbers'],
     queryFn: async () => {
       const res = await api.get('/barbers');
@@ -50,16 +49,11 @@ export function DashboardPage() {
   });
 
   // Fetch products (public fallback)
-  const { data: products } = useQuery<ProductPublic[]>({
+  const { data: products } = useQuery<ProductData[]>({
     queryKey: ['dashboard-products'],
     queryFn: async () => {
-      try {
-        const res = await api.get('/products');
-        return res.data.data;
-      } catch {
-        const res = await api.get('/products/public');
-        return res.data.data;
-      }
+      const res = await api.get('/products');
+      return res.data.data;
     },
     staleTime: 5 * 60 * 1000,
   });
@@ -174,7 +168,7 @@ export function DashboardPage() {
                   <Users className="w-3.5 h-3.5 text-brand-400" />
                 </div>
                 <div className="flex-1 min-w-0">
-                  <p className="text-sm font-medium text-white font-body truncate">{barber.name}</p>
+                  <p className="text-sm font-medium text-white font-body truncate">{barber.user.name}</p>
                 </div>
                 <span
                   className={`px-3 py-1 text-[10px] uppercase tracking-wider font-semibold rounded-full font-body border ${

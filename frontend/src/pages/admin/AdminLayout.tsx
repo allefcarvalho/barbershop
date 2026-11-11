@@ -2,7 +2,9 @@
 // Barbearia Vikings — Admin Layout Shell
 // =============================================
 
-import { Link, Outlet, useLocation } from 'react-router-dom';
+import { Link, Navigate, Outlet, useLocation, useNavigate } from 'react-router-dom';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { authService, type SessionUser } from '../../services/auth.service';
 import { LayoutDashboard, Calendar, Scissors, Package, LogOut, ChevronRight } from 'lucide-react';
 import clsx from 'clsx';
 import logo from '../../assets/logo.png';
@@ -14,8 +16,40 @@ const sidebarLinks = [
   { label: 'Produtos', href: '/admin/produtos', icon: Package },
 ];
 
+const ROLE_LABEL: Record<SessionUser['role'], string> = {
+  OWNER: 'Dono',
+  MANAGER: 'Gerente',
+  RECEPTIONIST: 'Recepção',
+  BARBER: 'Barbeiro',
+};
+
+/** Guarda das rotas /admin: sem sessão válida (nem cookie para renovar) → /login. */
 export function AdminLayout() {
   const location = useLocation();
+  const navigate = useNavigate();
+  const queryClient = useQueryClient();
+  const { data: user, isLoading } = useQuery({
+    queryKey: ['session'],
+    queryFn: authService.restore,
+    retry: false,
+    staleTime: Infinity,
+  });
+
+  if (isLoading) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-dark">
+        <div className="w-10 h-10 border-2 border-brand-500/30 border-t-brand-400 rounded-full animate-spin" />
+      </div>
+    );
+  }
+  if (!user) return <Navigate to="/login" replace state={{ from: location.pathname }} />;
+
+  const logout = async () => {
+    await authService.logout();
+    queryClient.clear();
+    navigate('/login', { replace: true });
+  };
+  const initials = user.name.split(' ').map((p) => p[0]).slice(0, 2).join('').toUpperCase();
 
   return (
     <div className="flex min-h-screen bg-dark">
@@ -56,13 +90,13 @@ export function AdminLayout() {
 
         {/* Logout */}
         <div className="border-t border-white/5 p-3">
-          <Link
-            to="/login"
-            className="flex items-center gap-3 px-4 py-3 text-sm font-medium text-[#5A5650] hover:text-red-400 transition-colors rounded-lg hover:bg-red-500/5 font-body"
+          <button
+            onClick={logout}
+            className="w-full flex items-center gap-3 px-4 py-3 text-sm font-medium text-[#5A5650] hover:text-red-400 transition-colors rounded-lg hover:bg-red-500/5 font-body"
           >
             <LogOut className="w-4 h-4" />
             Sair
-          </Link>
+          </button>
         </div>
       </aside>
 
@@ -74,9 +108,18 @@ export function AdminLayout() {
             {sidebarLinks.find((l) => l.href === location.pathname)?.label || 'Admin'}
           </h2>
           <div className="flex items-center gap-3">
-            <div className="w-8 h-8 rounded-full bg-brand-500/10 flex items-center justify-center">
-              <span className="text-xs font-semibold text-brand-400 font-body">AD</span>
+            <div className="text-right hidden sm:block">
+              <p className="text-sm text-white font-body">{user.name}</p>
+              <p className="text-[10px] uppercase tracking-wider text-[#5A5650] font-body">
+                {ROLE_LABEL[user.role]} · {user.tenant.name}
+              </p>
             </div>
+            <div className="w-8 h-8 rounded-full bg-brand-500/10 flex items-center justify-center">
+              <span className="text-xs font-semibold text-brand-400 font-body">{initials}</span>
+            </div>
+            <button onClick={logout} className="lg:hidden text-[#5A5650] hover:text-red-400" aria-label="Sair">
+              <LogOut className="w-4 h-4" />
+            </button>
           </div>
         </header>
 

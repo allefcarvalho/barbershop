@@ -1,208 +1,42 @@
-# 🪓 Barbearia Vikings — Backend API
+# Backend — API multi-barbearia
 
-API REST completa para sistema de agendamento e gestão de barbearia.
+Node 20+ · Express 5 · TypeScript · Prisma · PostgreSQL 15 · Zod · JWT
 
-## Stack
-
-- **Node.js 20+** + **Express** + **TypeScript**
-- **Prisma** ORM + **PostgreSQL** 15+
-- **JWT** (access + refresh tokens) + **bcrypt**
-- **Zod** para validação de dados
-- **Docker** + **Docker Compose**
-
----
-
-## Início Rápido
-
-### 1. Pré-requisitos
-
-- Node.js 20+
-- Docker Desktop (para PostgreSQL)
-- npm 10+
-
-### 2. Configurar variáveis de ambiente
+## Rodando local
 
 ```bash
-# Na raiz do monorepo
-cp .env.example .env
-```
-
-Edite o `.env` conforme necessário (credenciais do banco, JWT secrets, etc.)
-
-### 3. Subir o PostgreSQL
-
-```bash
-docker-compose up -d
-```
-
-### 4. Instalar dependências
-
-```bash
-# Na raiz do monorepo
+cp backend/.env.example backend/.env      # e troque o JWT_SECRET
+docker compose up -d postgres             # Postgres na porta 5433
 npm install
+npm run db:migrate --workspace=backend    # aplica migrations
+npm run db:seed --workspace=backend       # tenant "vikings", login admin@vikinges.com / admin123
+npm run dev                               # API :3333 + front :5173
+npm test                                  # testes (usam o banco do .env)
 ```
 
-### 5. Gerar o Prisma Client + rodar migration
+## Regras de arquitetura
 
-```bash
-cd backend
-npx prisma generate
-npx prisma migrate dev --name init
-```
+- **Multi-tenant**: toda tabela de negócio tem `tenant_id`. Rotas autenticadas pegam o tenant do **token**; rotas públicas, do **slug** na URL. Nunca do body.
+- **Double booking** é impedido pelo banco (`EXCLUDE USING gist` em `bookings`), não só pela aplicação.
+- **Horários**: o banco guarda UTC (`timestamptz`); grade e slots são calculados no fuso do tenant (`src/utils/time.ts`). Não depende do `TZ` do servidor.
+- **Dinheiro** em centavos (`priceCents`). O agendamento guarda preço e duração do momento da reserva.
+- **Sessão**: access token JWT (15 min) + refresh token opaco em cookie `httpOnly`, rotativo, com detecção de reuso.
+- **API stateless**: com `REDIS_URL` o rate limit é compartilhado entre instâncias.
 
-### 6. Rodar o seed (dados iniciais)
+## Rotas (`/api/v1`)
 
-```bash
-npx tsx prisma/seed.ts
-```
+| Grupo | Acesso | Rotas |
+|-------|--------|-------|
+| `/auth` | público | `POST /login`, `POST /refresh` (cookie), `POST /logout`, `GET /me` (auth) |
+| `/public/:slug` | público | `GET /`, `GET /services`, `GET /barbers?serviceId`, `GET /barbers/:id/slots?date&serviceId`, `GET /products`, `POST /bookings` |
+| `/services` | equipe; escrita dono/gerente | `GET /`, `GET /:id`, `POST`, `PUT /:id`, `DELETE /:id` |
+| `/barbers` | equipe; escrita dono/gerente ou o próprio (perfil) | `GET /`, `GET /:id`, `POST`, `PUT /:id`, `DELETE /:id` |
+| `/availability/:barberId` | equipe; escrita dono/gerente ou o próprio | `GET`, `PUT`, `GET/POST /exceptions`, `DELETE /exceptions/:id` |
+| `/bookings` | equipe (barbeiro: só os seus) | `GET /?date&barberId&status`, `GET /:id`, `PATCH /:id/status` |
+| `/clients` | equipe (barbeiro: só quem atendeu); escrita recepção+ | `GET /?search`, `GET /:id`, `PUT /:id` |
+| `/products` | recepção+; cadastro dono/gerente | `GET /`, `GET /low-stock`, `GET /:id`, `POST`, `PUT`, `DELETE`, `POST/GET /:id/stock` |
+| `/notifications` | dono/gerente | `GET /`, `POST /process` |
 
-> Cria: 1 admin, 3 barbeiros, 5 serviços, disponibilidade semanal, 2 clientes, 3 produtos.
+Toda a superfície pública está em `src/modules/public.routes.ts` — revise esse arquivo ao expor algo novo.
 
-### 7. Iniciar o servidor
-
-```bash
-npm run dev
-# ou da raiz: npm run dev:backend
-```
-
-> 🪓 API disponível em `http://localhost:3333`
-
----
-
-## Estrutura de Pastas
-
-```
-backend/
-├── prisma/
-│   ├── schema.prisma       ← 10 entidades, enums, índices
-│   └── seed.ts             ← Dados iniciais
-│
-├── src/
-│   ├── server.ts           ← Entrypoint
-│   ├── app.ts              ← Express + middlewares + rotas
-│   │
-│   ├── config/
-│   │   ├── env.ts          ← Variáveis com validação Zod
-│   │   └── database.ts     ← PrismaClient singleton
-│   │
-│   ├── middlewares/
-│   │   ├── auth.middleware.ts    ← JWT verify + role guard
-│   │   ├── errorHandler.ts      ← Error handler global
-│   │   ├── rateLimiter.ts       ← Rate limiting (geral + auth)
-│   │   └── validateRequest.ts   ← Validação Zod (body + query)
-│   │
-│   ├── utils/
-│   │   ├── apiResponse.ts  ← Helpers de resposta padronizada
-│   │   └── timeSlots.ts    ← Gerador de slots de 35 min
-│   │
-│   └── modules/
-│       ├── auth/            ← Login, refresh, /me
-│       ├── barber/          ← CRUD barbeiros + associação serviços
-│       ├── service/         ← CRUD catálogo de serviços
-│       ├── availability/    ← Grade semanal + exceções + cálculo de slots
-│       ├── booking/         ← Agendamento com bloqueio transacional
-│       ├── client/          ← Clientes + busca + recorrência
-│       ├── product/         ← Produtos + movimentação de estoque
-│       └── notification/    ← Preparação WhatsApp (Strategy pattern)
-│
-├── Dockerfile
-├── tsconfig.json
-└── package.json
-```
-
----
-
-## Endpoints da API
-
-### 🔓 Autenticação (`/api/auth`)
-| Método | Rota | Descrição | Acesso |
-|--------|------|-----------|--------|
-| POST | `/api/auth/login` | Login (retorna JWT) | Público |
-| POST | `/api/auth/refresh` | Refresh token | Público |
-| GET | `/api/auth/me` | Dados do logado | Auth |
-
-### 🔧 Serviços (`/api/services`)
-| Método | Rota | Descrição | Acesso |
-|--------|------|-----------|--------|
-| GET | `/api/services` | Lista serviços | Público |
-| GET | `/api/services/:id` | Detalhe | Público |
-| POST | `/api/services` | Criar | Admin |
-| PUT | `/api/services/:id` | Atualizar | Admin |
-| DELETE | `/api/services/:id` | Desativar | Admin |
-
-### 💈 Barbeiros (`/api/barbers`)
-| Método | Rota | Descrição | Acesso |
-|--------|------|-----------|--------|
-| GET | `/api/barbers` | Lista (filtro ?serviceId) | Público |
-| GET | `/api/barbers/:id` | Detalhe | Público |
-| POST | `/api/barbers` | Cadastrar | Admin |
-| PUT | `/api/barbers/:id` | Atualizar | Admin/Barbeiro |
-| DELETE | `/api/barbers/:id` | Desativar | Admin |
-
-### 📅 Disponibilidade (`/api/availability`)
-| Método | Rota | Descrição | Acesso |
-|--------|------|-----------|--------|
-| GET | `/:barberId` | Grade semanal | Público |
-| GET | `/:barberId/slots?date=YYYY-MM-DD` | Slots livres | Público |
-| PUT | `/:barberId` | Atualizar grade | Auth |
-| GET | `/:barberId/exceptions` | Exceções | Auth |
-| POST | `/:barberId/exceptions` | Criar exceção | Auth |
-| DELETE | `/exceptions/:id` | Remover exceção | Auth |
-
-### 📋 Agendamentos (`/api/bookings`)
-| Método | Rota | Descrição | Acesso |
-|--------|------|-----------|--------|
-| POST | `/api/bookings` | Agendar | Público |
-| GET | `/api/bookings` | Listar (filtros) | Auth |
-| GET | `/api/bookings/:id` | Detalhe | Auth |
-| PATCH | `/api/bookings/:id/status` | Alterar status | Auth |
-| GET | `/api/bookings/barber/:barberId` | Agenda do dia | Auth |
-
-### 👥 Clientes (`/api/clients`)
-| Método | Rota | Descrição | Acesso |
-|--------|------|-----------|--------|
-| GET | `/api/clients` | Listar (busca + filtros) | Auth |
-| GET | `/api/clients/search?phone=x` | Buscar por telefone | Auth |
-| GET | `/api/clients/:id` | Detalhe + histórico | Auth |
-| PUT | `/api/clients/:id` | Atualizar | Admin |
-
-### 📦 Produtos (`/api/products`)
-| Método | Rota | Descrição | Acesso |
-|--------|------|-----------|--------|
-| GET | `/api/products` | Listar | Admin |
-| GET | `/api/products/low-stock` | Estoque baixo | Admin |
-| GET | `/api/products/:id` | Detalhe | Admin |
-| POST | `/api/products` | Criar | Admin |
-| PUT | `/api/products/:id` | Atualizar | Admin |
-| DELETE | `/api/products/:id` | Desativar | Admin |
-| POST | `/api/products/:id/stock` | Movimentação | Admin |
-| GET | `/api/products/:id/stock` | Histórico | Admin |
-
-### 🔔 Notificações (`/api/notifications`)
-| Método | Rota | Descrição | Acesso |
-|--------|------|-----------|--------|
-| GET | `/api/notifications` | Listar | Admin |
-| POST | `/api/notifications/process` | Processar pendentes | Admin |
-| POST | `/api/notifications/webhook` | Webhook WhatsApp | Sistema |
-
----
-
-## Regras de Negócio
-
-- ⏱️ Duração padrão: **35 minutos** por atendimento
-- 🔒 Bloqueio transacional de horários (sem conflitos)
-- ❌ Cancelamento permitido até **2h antes** do horário
-- 🔁 Cliente marcado como **recorrente** após 3+ visitas concluídas
-- 📦 Estoque controlado por **movimentações** (nunca edição direta)
-- 🔔 Notificações preparadas para **WhatsApp** via Strategy pattern
-
----
-
-## Credenciais do Seed
-
-| Usuário | Email | Senha | Role |
-|---------|-------|-------|------|
-| Admin Vikings | admin@vikinges.com | admin123 | ADMIN |
-| Carlos Ragnar | carlos@vikinges.com | barber123 | BARBER |
-| Thiago Bjorn | thiago@vikinges.com | barber123 | BARBER |
-| Rafael Leif | rafael@vikinges.com | barber123 | BARBER |
+Erros seguem `{ success: false, message, code }`, com `code` estável (`SLOT_TAKEN`, `SLOT_UNAVAILABLE`, `TOKEN_REUSED`, `FORBIDDEN`…).

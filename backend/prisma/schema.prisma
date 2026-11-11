@@ -1,5 +1,7 @@
 // =============================================
-// Barbearia Vikings — Prisma Schema
+// Plataforma Barbearias — Prisma Schema (multi-tenant)
+// Regras que o Prisma não expressa (EXCLUDE, CHECK) estão na migration SQL.
+// Todo DateTime é timestamptz (UTC no banco; fuso do tenant só na exibição/cálculo).
 // =============================================
 
 generator client {
@@ -11,10 +13,10 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-// ===== ENUMS =====
-
-enum UserRole {
-  ADMIN
+enum MemberRole {
+  OWNER
+  MANAGER
+  RECEPTIONIST
   BARBER
 }
 
@@ -50,160 +52,226 @@ enum NotificationStatus {
   FAILED
 }
 
-// ===== MODELS =====
+/// Uma barbearia. Configurações de agenda ficam aqui (antes eram constantes no código).
+model Tenant {
+  id                        String   @id @default(uuid())
+  slug                      String   @unique
+  name                      String
+  timezone                  String   @default("America/Sao_Paulo")
+  slotStepMinutes           Int      @default(15) @map("slot_step_minutes")
+  minAdvanceMinutes         Int      @default(60) @map("min_advance_minutes")
+  maxAdvanceDays            Int      @default(30) @map("max_advance_days")
+  clientCancelMinHours      Int      @default(2) @map("client_cancel_min_hours")
+  recurringThreshold        Int      @default(3) @map("recurring_threshold")
+  maxActiveBookingsPerPhone Int      @default(2) @map("max_active_bookings_per_phone")
+  active                    Boolean  @default(true)
+  createdAt                 DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
 
+  memberships Membership[]
+  clients     Client[]
+  services    Service[]
+  bookings    Booking[]
+  products    Product[]
+
+  @@map("tenants")
+}
+
+/// Pessoa que faz login. Papel e dados profissionais ficam na Membership (por barbearia).
 model User {
   id           String   @id @default(uuid())
   name         String
   email        String   @unique
   passwordHash String   @map("password_hash")
-  role         UserRole @default(BARBER)
-  phone        String
+  phone        String?
   avatarUrl    String?  @map("avatar_url")
   active       Boolean  @default(true)
-  createdAt    DateTime @default(now()) @map("created_at")
-  updatedAt    DateTime @updatedAt @map("updated_at")
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt    DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
 
-  // Relations
+  memberships   Membership[]
+  refreshTokens RefreshToken[]
+
+  @@map("users")
+}
+
+/// Vínculo usuário ↔ barbearia. Barbeiro = membership que atende serviços.
+model Membership {
+  id        String     @id @default(uuid())
+  tenantId  String     @map("tenant_id")
+  userId    String     @map("user_id")
+  role      MemberRole @default(BARBER)
+  active    Boolean    @default(true)
+  createdAt DateTime   @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  tenant                 Tenant                  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  user                   User                    @relation(fields: [userId], references: [id], onDelete: Cascade)
   services               BarberService[]
   availabilities         Availability[]
   availabilityExceptions AvailabilityException[]
   bookings               Booking[]
   stockMovements         StockMovement[]
+  refreshTokens          RefreshToken[]
 
-  @@map("users")
+  @@unique([tenantId, userId])
+  @@map("memberships")
+}
+
+/// Refresh token rotativo. Guardamos só o hash; reuso de um token já trocado revoga a família.
+model RefreshToken {
+  id           String    @id @default(uuid())
+  userId       String    @map("user_id")
+  membershipId String    @map("membership_id")
+  tokenHash    String    @unique @map("token_hash")
+  familyId     String    @map("family_id")
+  expiresAt    DateTime  @map("expires_at") @db.Timestamptz(3)
+  revokedAt    DateTime? @map("revoked_at") @db.Timestamptz(3)
+  createdAt    DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  user       User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  membership Membership @relation(fields: [membershipId], references: [id], onDelete: Cascade)
+
+  @@index([familyId])
+  @@map("refresh_tokens")
 }
 
 model Client {
   id            String    @id @default(uuid())
+  tenantId      String    @map("tenant_id")
   name          String
-  phone         String    @unique
+  phone         String // E.164, ex.: +5511999990000
   email         String?
   totalBookings Int       @default(0) @map("total_bookings")
-  lastVisit     DateTime? @map("last_visit")
+  lastVisit     DateTime? @map("last_visit") @db.Timestamptz(3)
   isRecurring   Boolean   @default(false) @map("is_recurring")
-  createdAt     DateTime  @default(now()) @map("created_at")
+  createdAt     DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
 
-  // Relations
+  tenant   Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   bookings Booking[]
 
+  @@unique([tenantId, phone])
   @@map("clients")
 }
 
 model Service {
   id              String  @id @default(uuid())
+  tenantId        String  @map("tenant_id")
   name            String
   description     String
-  price           Decimal @db.Decimal(10, 2)
-  durationMinutes Int     @default(35) @map("duration_minutes")
+  priceCents      Int     @map("price_cents")
+  durationMinutes Int     @map("duration_minutes")
   active          Boolean @default(true)
   imageUrl        String? @map("image_url")
   sortOrder       Int     @default(0) @map("sort_order")
 
-  // Relations
+  tenant   Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   barbers  BarberService[]
   bookings Booking[]
 
+  @@index([tenantId, sortOrder])
   @@map("services")
 }
 
 model BarberService {
-  id        String @id @default(uuid())
-  userId    String @map("user_id")
-  serviceId String @map("service_id")
+  id           String @id @default(uuid())
+  membershipId String @map("membership_id")
+  serviceId    String @map("service_id")
 
-  // Relations
-  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
-  service Service @relation(fields: [serviceId], references: [id], onDelete: Cascade)
+  membership Membership @relation(fields: [membershipId], references: [id], onDelete: Cascade)
+  service    Service    @relation(fields: [serviceId], references: [id], onDelete: Cascade)
 
-  @@unique([userId, serviceId])
+  @@unique([membershipId, serviceId])
   @@map("barber_services")
 }
 
 model Availability {
-  id        String  @id @default(uuid())
-  userId    String  @map("user_id")
-  dayOfWeek Int     @map("day_of_week") // 0 = Sunday, 6 = Saturday
-  startTime String  @map("start_time")  // "09:00"
-  endTime   String  @map("end_time")    // "18:00"
-  active    Boolean @default(true)
+  id           String  @id @default(uuid())
+  membershipId String  @map("membership_id")
+  dayOfWeek    Int     @map("day_of_week") // 0 = domingo … 6 = sábado
+  startTime    String  @map("start_time") // "09:00" no fuso do tenant
+  endTime      String  @map("end_time")
+  active       Boolean @default(true)
 
-  // Relations
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  membership Membership @relation(fields: [membershipId], references: [id], onDelete: Cascade)
 
-  @@unique([userId, dayOfWeek])
+  @@unique([membershipId, dayOfWeek])
   @@map("availabilities")
 }
 
 model AvailabilityException {
-  id        String  @id @default(uuid())
-  userId    String  @map("user_id")
-  date      DateTime @db.Date
-  isBlocked Boolean  @default(true) @map("is_blocked")
-  startTime String?  @map("start_time")
-  endTime   String?  @map("end_time")
-  reason    String?
+  id           String   @id @default(uuid())
+  membershipId String   @map("membership_id")
+  date         DateTime @db.Date
+  isBlocked    Boolean  @default(true) @map("is_blocked")
+  startTime    String?  @map("start_time")
+  endTime      String?  @map("end_time")
+  reason       String?
 
-  // Relations
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  membership Membership @relation(fields: [membershipId], references: [id], onDelete: Cascade)
 
-  @@unique([userId, date])
+  @@unique([membershipId, date])
   @@map("availability_exceptions")
 }
 
 model Booking {
-  id        String        @id @default(uuid())
-  clientId  String        @map("client_id")
-  userId    String        @map("user_id") // barber
-  serviceId String        @map("service_id")
-  startTime DateTime      @map("start_time")
-  endTime   DateTime      @map("end_time")
-  status    BookingStatus @default(CONFIRMED)
-  notes     String?
-  createdAt DateTime      @default(now()) @map("created_at")
-  updatedAt DateTime      @updatedAt @map("updated_at")
+  id              String        @id @default(uuid())
+  tenantId        String        @map("tenant_id")
+  clientId        String        @map("client_id")
+  barberId        String        @map("barber_id") // membership
+  serviceId       String        @map("service_id")
+  startAt         DateTime      @map("start_at") @db.Timestamptz(3)
+  endAt           DateTime      @map("end_at") @db.Timestamptz(3)
+  status          BookingStatus @default(CONFIRMED)
+  /// Preço e duração no momento da reserva (mudar o serviço não altera o histórico)
+  priceCents      Int           @map("price_cents")
+  durationMinutes Int           @map("duration_minutes")
+  notes           String?
+  createdAt       DateTime      @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt       DateTime      @updatedAt @map("updated_at") @db.Timestamptz(3)
 
-  // Relations
+  tenant        Tenant         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   client        Client         @relation(fields: [clientId], references: [id])
-  user          User           @relation(fields: [userId], references: [id])
+  barber        Membership     @relation(fields: [barberId], references: [id])
   service       Service        @relation(fields: [serviceId], references: [id])
   notifications Notification[]
 
-  @@index([userId, startTime])
+  @@index([barberId, startAt])
+  @@index([tenantId, startAt])
   @@index([clientId, createdAt])
   @@map("bookings")
 }
 
 model Product {
   id            String   @id @default(uuid())
+  tenantId      String   @map("tenant_id")
   name          String
   description   String
-  price         Decimal  @db.Decimal(10, 2)
+  priceCents    Int      @map("price_cents")
   stockQuantity Int      @default(0) @map("stock_quantity")
   stockMin      Int      @default(5) @map("stock_min")
   imageUrl      String?  @map("image_url")
   active        Boolean  @default(true)
-  createdAt     DateTime @default(now()) @map("created_at")
+  createdAt     DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
 
-  // Relations
+  tenant         Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   stockMovements StockMovement[]
 
+  @@index([tenantId])
   @@map("products")
 }
 
 model StockMovement {
-  id        String            @id @default(uuid())
-  productId String            @map("product_id")
-  userId    String            @map("user_id")
-  type      StockMovementType
-  quantity  Int
-  reason    String?
-  createdAt DateTime          @default(now()) @map("created_at")
+  id           String            @id @default(uuid())
+  productId    String            @map("product_id")
+  membershipId String            @map("membership_id")
+  type         StockMovementType
+  quantity     Int
+  reason       String?
+  createdAt    DateTime          @default(now()) @map("created_at") @db.Timestamptz(3)
 
-  // Relations
-  product Product @relation(fields: [productId], references: [id])
-  user    User    @relation(fields: [userId], references: [id])
+  product    Product    @relation(fields: [productId], references: [id])
+  membership Membership @relation(fields: [membershipId], references: [id])
 
+  @@index([productId, createdAt])
   @@map("stock_movements")
 }
 
@@ -214,11 +282,11 @@ model Notification {
   type      NotificationType
   status    NotificationStatus  @default(PENDING)
   payload   String?
-  sentAt    DateTime?           @map("sent_at")
-  createdAt DateTime            @default(now()) @map("created_at")
+  sentAt    DateTime?           @map("sent_at") @db.Timestamptz(3)
+  createdAt DateTime            @default(now()) @map("created_at") @db.Timestamptz(3)
 
-  // Relations
-  booking Booking @relation(fields: [bookingId], references: [id])
+  booking Booking @relation(fields: [bookingId], references: [id], onDelete: Cascade)
 
+  @@index([status, createdAt])
   @@map("notifications")
 }

@@ -1,18 +1,8 @@
-// =============================================
-// Barbearia Vikings — Barber Service (API prep)
-// =============================================
-
-import { api } from '../config/api';
+import { api, pub } from '../config/api';
 
 export const barberService = {
   async getAll(serviceId?: string) {
-    const params = serviceId ? { serviceId } : {};
-    const res = await api.get('/barbers', { params });
-    return res.data.data;
-  },
-
-  async getById(id: string) {
-    const res = await api.get(`/barbers/${id}`);
+    const res = await api.get(pub('/barbers'), { params: serviceId ? { serviceId } : {} });
     return res.data.data;
   },
 };

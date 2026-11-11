@@ -3,6 +3,7 @@
 // =============================================
 
 import { ShoppingBag, Package } from 'lucide-react';
+import { formatBRL } from '../utils/format';
 import { Section } from '../components/layout/Section';
 import { Container } from '../components/layout/Container';
 import { SectionTitle } from '../components/common/SectionTitle';
@@ -57,7 +58,7 @@ export function Products() {
 
                   <div className="flex items-center justify-between pt-4 border-t border-white/5">
                     <span className="text-2xl font-display font-bold text-brand-400">
-                      R${product.price}
+                      {formatBRL(product.priceCents)}
                     </span>
                     <button className="flex items-center gap-2 px-4 py-2 bg-brand-500/10 hover:bg-brand-500/20 text-brand-400 text-xs uppercase tracking-wider font-semibold rounded-lg transition-all duration-300 border border-brand-500/20 hover:border-brand-500/30 font-body">
                       <ShoppingBag className="w-3.5 h-3.5" />

@@ -5,12 +5,16 @@
 import { useState, useMemo } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { ArrowLeft, ArrowRight, Check, Calendar, Clock, User, Scissors, AlertCircle } from 'lucide-react';
+import { formatBRL } from '../utils/format';
 import clsx from 'clsx';
 import { Navbar } from '../components/layout/Navbar';
 import { Container } from '../components/layout/Container';
 import { StepIndicator } from '../components/booking/StepIndicator';
 import { GridSkeleton, ServiceCardSkeleton } from '../components/common/LoadingSkeleton';
-import { useServices } from '../hooks/useServices';
+import { useQueryClient } from '@tanstack/react-query';
+import { formatInTimeZone } from 'date-fns-tz';
+import { useServices, useTenant } from '../hooks/useServices';
+import { apiErrorMessage } from '../config/api';
 import { useBarbers } from '../hooks/useBarbers';
 import { useAvailableSlots } from '../hooks/useAvailableSlots';
 import { bookingService } from '../services/booking.service';
@@ -32,25 +36,29 @@ export function BookingPage() {
   const [isSuccess, setIsSuccess] = useState(false);
   const [submitError, setSubmitError] = useState('');
 
+  const queryClient = useQueryClient();
+
   // === API Hooks ===
   const { data: services, isLoading: loadingServices } = useServices();
   const { data: barbers, isLoading: loadingBarbers } = useBarbers(selectedServiceId || undefined);
-  const { data: slots, isLoading: loadingSlots } = useAvailableSlots(selectedBarberId, selectedDate);
+  const { data: slots, isLoading: loadingSlots } = useAvailableSlots(selectedBarberId, selectedDate, selectedServiceId);
+  const { data: tenant } = useTenant();
 
   const selectedService = services?.find((s) => s.id === selectedServiceId);
   const selectedBarber = barbers?.find((b) => b.id === selectedBarberId);
 
-  // Generate available dates (next 30 days, excluding Sundays)
+  // Datas a partir de hoje (no fuso da barbearia), só nos dias em que ela abre e dentro da janela configurada.
   const availableDates = useMemo(() => {
+    if (!tenant) return [];
+    const today = formatInTimeZone(new Date(), tenant.timezone, 'yyyy-MM-dd');
     const dates: string[] = [];
-    const today = new Date();
-    for (let i = 1; i <= 30; i++) {
-      const d = new Date(today);
-      d.setDate(d.getDate() + i);
-      if (d.getDay() !== 0) dates.push(d.toISOString().split('T')[0]);
+    for (let i = 0; i <= tenant.maxAdvanceDays; i++) {
+      const d = new Date(`${today}T12:00:00Z`);
+      d.setUTCDate(d.getUTCDate() + i);
+      if (tenant.openDays.includes(d.getUTCDay())) dates.push(d.toISOString().slice(0, 10));
     }
     return dates;
-  }, []);
+  }, [tenant]);
 
   const canAdvance =
     (step === 0 && selectedServiceId) ||
@@ -63,19 +71,19 @@ export function BookingPage() {
     setSubmitError('');
 
     try {
-      // Build ISO startTime from date + time
-      const startTime = `${selectedDate}T${selectedTime}:00`;
       await bookingService.create({
         clientName,
         clientPhone,
         barberId: selectedBarberId,
         serviceId: selectedServiceId,
-        startTime,
+        date: selectedDate,
+        time: selectedTime,
       });
       setIsSuccess(true);
-    } catch (err: any) {
-      const msg = err?.response?.data?.message || err?.message || 'Erro ao criar agendamento';
-      setSubmitError(msg);
+    } catch (err) {
+      setSubmitError(apiErrorMessage(err, 'Erro ao criar agendamento'));
+      // Horário pode ter sido tomado por outra pessoa: atualiza a lista.
+      queryClient.invalidateQueries({ queryKey: ['slots'] });
     } finally {
       setIsSubmitting(false);
     }
@@ -185,7 +193,7 @@ export function BookingPage() {
                             'text-lg font-display font-bold',
                             selected ? 'text-brand-400' : 'text-[#8A8680]',
                           )}>
-                            R${service.price}
+                            {formatBRL(service.priceCents)}
                           </span>
                         </div>
                       </button>
@@ -225,7 +233,7 @@ export function BookingPage() {
                         <div className={clsx('p-4', selected ? 'bg-brand-500/5' : 'bg-panel')}>
                           <h3 className="text-sm font-semibold text-white font-body">{barber.name}</h3>
                           <p className="text-xs text-brand-400 uppercase tracking-wider mt-0.5 font-body">
-                            {barber.role === 'ADMIN' ? 'Mestre Barbeiro' : 'Barbeiro'}
+                            Barbeiro
                           </p>
                         </div>
                       </button>
@@ -245,7 +253,7 @@ export function BookingPage() {
                   Escolha a Data
                 </h3>
                 <div className="flex gap-3 overflow-x-auto pb-4 scrollbar-hide">
-                  {availableDates.slice(0, 14).map((dateStr) => {
+                  {availableDates.map((dateStr) => {
                     const d = new Date(dateStr + 'T12:00:00');
                     const dayName = d.toLocaleDateString('pt-BR', { weekday: 'short' });
                     const dayNum = d.getDate();
@@ -324,7 +332,7 @@ export function BookingPage() {
                 <div className="flex items-center gap-3">
                   <Scissors className="w-4 h-4 text-brand-400 shrink-0" />
                   <span className="text-sm text-[#8A8680] font-body">{selectedService?.name}</span>
-                  <span className="ml-auto text-sm font-display font-bold text-brand-400">R${selectedService?.price}</span>
+                  <span className="ml-auto text-sm font-display font-bold text-brand-400">{selectedService && formatBRL(selectedService.priceCents)}</span>
                 </div>
                 <div className="flex items-center gap-3">
                   <User className="w-4 h-4 text-brand-400 shrink-0" />

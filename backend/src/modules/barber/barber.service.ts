@@ -1,140 +1,101 @@
-// =============================================
-// Barbearia Vikings — Barber Service
-// =============================================
-
 import bcrypt from 'bcryptjs';
+import { Prisma } from '@prisma/client';
 import { prisma } from '../../config/database';
-import { UserRole, BookingStatus } from '@prisma/client';
+import { HttpError } from '../../utils/apiResponse';
+import { getBarber } from '../availability/availability.service';
 import type { CreateBarberInput, UpdateBarberInput } from './barber.schema';
 
-export class BarberService {
-  async findAll(serviceId?: string) {
-    const where: any = { active: true, role: { in: [UserRole.BARBER, UserRole.ADMIN] } };
+/** Campos seguros para a página pública: sem e-mail nem telefone da equipe. */
+const publicSelect = {
+  id: true,
+  user: { select: { name: true, avatarUrl: true } },
+  services: { select: { serviceId: true } },
+} satisfies Prisma.MembershipSelect;
 
-    if (serviceId) {
-      where.services = { some: { serviceId } };
-    }
+const staffSelect = {
+  id: true,
+  role: true,
+  active: true,
+  createdAt: true,
+  user: { select: { id: true, name: true, email: true, phone: true, avatarUrl: true } },
+  services: { select: { service: { select: { id: true, name: true } } } },
+} satisfies Prisma.MembershipSelect;
 
-    return prisma.user.findMany({
-      where,
-      select: {
-        id: true,
-        name: true,
-        email: true,
-        phone: true,
-        role: true,
-        avatarUrl: true,
-        active: true,
-        createdAt: true,
-        services: {
-          include: { service: { select: { id: true, name: true } } },
-        },
-      },
-      orderBy: { name: 'asc' },
-    });
-  }
-
-  async findById(id: string) {
-    const barber = await prisma.user.findUnique({
-      where: { id },
-      select: {
-        id: true,
-        name: true,
-        email: true,
-        phone: true,
-        role: true,
-        avatarUrl: true,
-        active: true,
-        createdAt: true,
-        services: {
-          include: { service: { select: { id: true, name: true, price: true } } },
-        },
-        availabilities: true,
-      },
-    });
-
-    if (!barber) {
-      throw Object.assign(new Error('Barbeiro não encontrado'), { statusCode: 404 });
-    }
-
-    return barber;
-  }
-
-  async create(data: CreateBarberInput) {
-    const passwordHash = await bcrypt.hash(data.password, 12);
-
-    return prisma.$transaction(async (tx) => {
-      const barber = await tx.user.create({
-        data: {
-          name: data.name,
-          email: data.email,
-          passwordHash,
-          phone: data.phone,
-          role: UserRole.BARBER,
-          avatarUrl: data.avatarUrl,
-        },
-      });
-
-      if (data.serviceIds?.length) {
-        await tx.barberService.createMany({
-          data: data.serviceIds.map((serviceId) => ({
-            userId: barber.id,
-            serviceId,
-          })),
-        });
-      }
-
-      return this.findById(barber.id);
-    });
-  }
-
-  async update(id: string, data: UpdateBarberInput) {
-    await this.findById(id);
-
-    return prisma.$transaction(async (tx) => {
-      await tx.user.update({
-        where: { id },
-        data: {
-          name: data.name,
-          email: data.email,
-          phone: data.phone,
-          avatarUrl: data.avatarUrl,
-          active: data.active,
-        },
-      });
-
-      if (data.serviceIds !== undefined) {
-        await tx.barberService.deleteMany({ where: { userId: id } });
-
-        if (data.serviceIds.length) {
-          await tx.barberService.createMany({
-            data: data.serviceIds.map((serviceId) => ({
-              userId: id,
-              serviceId,
-            })),
-          });
-        }
-      }
-
-      // If deactivating, cancel future bookings
-      if (data.active === false) {
-        await tx.booking.updateMany({
-          where: {
-            userId: id,
-            startTime: { gt: new Date() },
-            status: { in: [BookingStatus.PENDING, BookingStatus.CONFIRMED] },
-          },
-          data: { status: BookingStatus.CANCELLED },
-        });
-      }
-
-      return this.findById(id);
-    });
-  }
-
-  async softDelete(id: string) {
-    return this.update(id, { active: false });
-  }
+async function assertServicesInTenant(tx: Prisma.TransactionClient, tenantId: string, serviceIds: string[]) {
+  const n = await tx.service.count({ where: { tenantId, id: { in: serviceIds } } });
+  if (n !== new Set(serviceIds).size) throw new HttpError(400, 'Serviço inválido', 'INVALID_SERVICE');
 }
 
-export const barberService = new BarberService();
+export const barberService = {
+  async listPublic(tenantId: string, serviceId?: string) {
+    const rows = await prisma.membership.findMany({
+      where: {
+        tenantId,
+        active: true,
+        user: { active: true },
+        services: serviceId ? { some: { serviceId, service: { active: true } } } : { some: {} },
+      },
+      select: publicSelect,
+      orderBy: { user: { name: 'asc' } },
+    });
+    return rows.map((m) => ({ id: m.id, name: m.user.name, avatarUrl: m.user.avatarUrl, serviceIds: m.services.map((s) => s.serviceId) }));
+  },
+
+  async list(tenantId: string) {
+    return prisma.membership.findMany({ where: { tenantId }, select: staffSelect, orderBy: { user: { name: 'asc' } } });
+  },
+
+  async findById(tenantId: string, id: string) {
+    await getBarber(tenantId, id);
+    return prisma.membership.findUniqueOrThrow({ where: { id }, select: staffSelect });
+  },
+
+  async create(tenantId: string, data: CreateBarberInput) {
+    const email = data.email.toLowerCase();
+    // ponytail: e-mail já cadastrado (ex.: em outra barbearia) exige o fluxo de convite (Fase 1), para não vincular conta alheia.
+    if (await prisma.user.findUnique({ where: { email } })) {
+      throw new HttpError(409, 'E-mail já cadastrado. Use o convite de equipe.', 'EMAIL_IN_USE');
+    }
+    const passwordHash = await bcrypt.hash(data.password, 12);
+
+    const id = await prisma.$transaction(async (tx) => {
+      if (data.serviceIds?.length) await assertServicesInTenant(tx, tenantId, data.serviceIds);
+      const user = await tx.user.create({ data: { name: data.name, email, passwordHash, phone: data.phone, avatarUrl: data.avatarUrl } });
+      const m = await tx.membership.create({ data: { tenantId, userId: user.id, role: data.role } });
+      if (data.serviceIds?.length) {
+        await tx.barberService.createMany({ data: data.serviceIds.map((serviceId) => ({ membershipId: m.id, serviceId })) });
+      }
+      return m.id;
+    });
+    return this.findById(tenantId, id);
+  },
+
+  /** `managed` = quem chama é dono/gerente; o próprio barbeiro só altera o perfil. */
+  async update(tenantId: string, id: string, data: UpdateBarberInput, managed: boolean) {
+    const m = await getBarber(tenantId, id);
+    if (!managed && (data.active !== undefined || data.serviceIds !== undefined || data.role !== undefined)) {
+      throw new HttpError(403, 'Somente o dono ou gerente altera serviços, papel e status', 'FORBIDDEN');
+    }
+
+    await prisma.$transaction(async (tx) => {
+      await tx.user.update({ where: { id: m.userId }, data: { name: data.name, phone: data.phone, avatarUrl: data.avatarUrl } });
+      await tx.membership.update({ where: { id }, data: { active: data.active, role: data.role } });
+
+      if (data.serviceIds) {
+        await assertServicesInTenant(tx, tenantId, data.serviceIds);
+        await tx.barberService.deleteMany({ where: { membershipId: id } });
+        await tx.barberService.createMany({ data: data.serviceIds.map((serviceId) => ({ membershipId: id, serviceId })) });
+      }
+
+      if (data.active === false) {
+        // Desligado: cancela os agendamentos futuros e encerra as sessões.
+        await tx.booking.updateMany({
+          where: { barberId: id, startAt: { gt: new Date() }, status: { in: ['PENDING', 'CONFIRMED'] } },
+          data: { status: 'CANCELLED' },
+        });
+        await tx.refreshToken.updateMany({ where: { membershipId: id, revokedAt: null }, data: { revokedAt: new Date() } });
+      }
+    });
+    return this.findById(tenantId, id);
+  },
+};

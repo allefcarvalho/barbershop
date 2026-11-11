@@ -1,21 +1,19 @@
-// =============================================
-// Barbearia Vikings — Notification Routes
-// =============================================
-
 import { Router } from 'express';
-import { notificationController } from './notification.controller';
-import { authenticate, requireRole } from '../../middlewares/auth.middleware';
-import { validateQuery, validateRequest } from '../../middlewares/validateRequest';
-import { notificationFiltersSchema, webhookSchema } from './notification.schema';
-import { UserRole } from '@prisma/client';
+import { notificationService } from './notification.service';
+import { notificationFiltersSchema } from './notification.schema';
+import { requireRole, MANAGERS } from '../../middlewares/auth.middleware';
+import { sendSuccess, sendPaginated } from '../../utils/apiResponse';
 
+// Montado em /api/v1/notifications (autenticado). O webhook do WhatsApp volta na Fase 3, com verificação de assinatura.
 const router = Router();
 
-// Admin only
-router.get('/', authenticate, requireRole(UserRole.ADMIN), validateQuery(notificationFiltersSchema), notificationController.findAll);
-router.post('/process', authenticate, requireRole(UserRole.ADMIN), notificationController.processPending);
+router.use(requireRole(...MANAGERS));
 
-// Webhook — system access (future: validate signature)
-router.post('/webhook', validateRequest(webhookSchema), notificationController.webhook);
+router.get('/', async (req, res) => {
+  const r = await notificationService.list(req.auth!.tenantId, notificationFiltersSchema.parse(req.query));
+  sendPaginated(res, r.notifications, r.total, r.page, r.pageSize);
+});
+
+router.post('/process', async (req, res) => sendSuccess(res, await notificationService.processPending(req.auth!.tenantId)));
 
 export { router as notificationRoutes };

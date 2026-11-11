@@ -3,7 +3,11 @@
 // =============================================
 
 import { useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
+import { useQueryClient } from '@tanstack/react-query';
+import type { AxiosError } from 'axios';
+import { authService } from '../services/auth.service';
+import { apiErrorMessage } from '../config/api';
 import { Eye, EyeOff, LogIn } from 'lucide-react';
 import { Container } from '../components/layout/Container';
 import logo from '../assets/logo.png';
@@ -15,15 +19,29 @@ export function LoginPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const [tenants, setTenants] = useState<{ slug: string; name: string }[]>([]);
+  const navigate = useNavigate();
+  const queryClient = useQueryClient();
+
+  const doLogin = async (tenantSlug?: string) => {
     setError('');
     setLoading(true);
+    try {
+      const user = await authService.login(email, password, tenantSlug);
+      queryClient.setQueryData(['session'], user);
+      navigate('/admin', { replace: true });
+    } catch (err) {
+      const data = (err as AxiosError<{ code?: string; data?: { tenants: { slug: string; name: string }[] } }>).response?.data;
+      if (data?.code === 'CHOOSE_TENANT' && data.data) setTenants(data.data.tenants);
+      else setError(apiErrorMessage(err, 'Não foi possível entrar. Tente novamente.'));
+    } finally {
+      setLoading(false);
+    }
+  };
 
-    // Simulate login — will connect to authService.login() when backend is ready
-    await new Promise((resolve) => setTimeout(resolve, 1000));
-    setLoading(false);
-    setError('Funcionalidade disponível após integração com o backend.');
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    doLogin();
   };
 
   return (
@@ -85,6 +103,22 @@ export function LoginPage() {
                 </button>
               </div>
             </div>
+
+            {tenants.length > 0 && (
+              <div className="space-y-2">
+                <p className="text-xs uppercase tracking-wider text-[#5A5650] font-body">Escolha a barbearia</p>
+                {tenants.map((t) => (
+                  <button
+                    key={t.slug}
+                    type="button"
+                    onClick={() => doLogin(t.slug)}
+                    className="w-full px-4 py-3 text-left text-sm text-white bg-panel border border-white/10 rounded-lg hover:border-brand-500/40 transition-colors font-body"
+                  >
+                    {t.name}
+                  </button>
+                ))}
+              </div>
+            )}
 
             {error && (
               <p className="text-xs text-red-400 bg-red-500/5 border border-red-500/10 rounded-lg px-4 py-2.5 font-body">
