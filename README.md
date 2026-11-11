@@ -11,17 +11,33 @@ Sistema web (SaaS) para barbearias: **agendamento online 24h** para o cliente e 
 | Fase | Conteúdo | Situação |
 |------|----------|----------|
 | **0 — Fundação** | Multi-tenant, proteção contra double booking, fuso horário, autenticação real, permissões, testes e CI | ✅ Concluída |
-| **1 — MVP vendável** | Telas de gestão: agenda (filtros, status, encaixe), serviços, equipe, disponibilidade, clientes, produtos, configurações da barbearia; cancelamento pelo cliente via link | ⏳ Próxima |
-| **2 — Gestão** | Comanda, caixa, comissões, relatórios | ⏳ |
+| **1 — MVP vendável** | Telas de gestão: agenda (filtros, status, encaixe), serviços, equipe, disponibilidade, clientes, produtos, configurações da barbearia; cancelamento pelo cliente via link; LGPD básica | ✅ Concluída (falta só o CAPTCHA, que precisa de conta no Cloudflare) |
+| **2 — Gestão** | Comanda, caixa, comissões, relatórios | ⏳ Próxima |
 | **3 — Automação** | WhatsApp (confirmação, lembrete, cancelamento), lista de espera, política de no-show | ⏳ |
 | **4 — Plataforma** | Cadastro self-service de barbearias, planos e cobrança, multiunidade, fidelidade, PWA | ⏳ |
 
 ### Já funciona
-- Site público da barbearia com serviços, equipe, vitrine de produtos, FAQ e contato.
+
+**Para o cliente (site público)**
+- Site da barbearia com serviços, equipe, vitrine de produtos, FAQ e contato.
 - Agendamento em 4 etapas sem cadastro. Os horários levam em conta a duração do serviço, a grade do barbeiro, folgas e a antecedência mínima e máxima.
-- Login da equipe com sessão segura, painel restrito e logout.
-- Painel com dashboard, agenda do dia, serviços e produtos (somente leitura por enquanto).
-- API completa para serviços, equipe, disponibilidade, agendamentos, clientes, estoque e notificações.
+- Aceite da política de privacidade (LGPD), com e-mail e observações opcionais.
+- Link pessoal (`/agendamento#…`) para ver e cancelar o próprio horário, até o prazo definido pela barbearia.
+
+**Para a equipe (painel `/admin`)**
+
+| Tela | O que faz | Quem vê |
+|------|-----------|---------|
+| Dashboard | Atendimentos e faturamento do dia, concluídos e faltas do mês, próximos horários, alertas | Todos (barbeiro: só os próprios números) |
+| Agenda | Navegar por data, filtrar, confirmar, concluir, marcar falta, cancelar, remarcar, agendar pelo painel e encaixe; atualiza sozinha a cada 30s | Todos (barbeiro: só a própria agenda) |
+| Clientes | Busca, recorrentes, histórico, preferências, exclusão de dados (LGPD) | Todos (barbeiro: só quem atendeu) |
+| Horários | Grade semanal e folgas/bloqueios/horário especial por profissional | Todos (barbeiro: só o próprio) |
+| Equipe | Cadastrar membros, papéis e serviços que cada um atende | Dono e gerente |
+| Serviços | Criar, editar preço/duração, desativar | Dono e gerente |
+| Produtos | Cadastro, estoque baixo, entrada/saída/ajuste com histórico | Dono, gerente e recepção |
+| Configurações | Regras de agendamento, cancelamento, recorrência, fuso | Dono e gerente editam; recepção vê |
+
+O painel funciona no celular: o menu vira uma barra de rolagem lateral e os formulários se ajustam à tela.
 
 ---
 
@@ -130,6 +146,25 @@ Os testes de integração rodam contra um PostgreSQL de verdade e cobrem:
 ---
 
 ## Histórico
+
+### 2026-11-11 — Fase 1: painel de gestão completo
+- **Agenda:**
+  - navegar por data, filtrar por barbeiro e status;
+  - confirmar, concluir, marcar falta, cancelar e remarcar;
+  - agendar pelo painel com sugestão de horários livres e busca do cliente pelo telefone;
+  - encaixe ("atender agora") e origem de cada agendamento (online, painel, encaixe).
+- **Telas novas:** equipe, horários (grade e folgas), clientes, serviços, produtos com movimentação de estoque e configurações da barbearia.
+- **Dashboard** com números reais do dia e do mês.
+- **Cliente final:**
+  - link para ver e cancelar o agendamento sem login;
+  - aceite da política de privacidade e página `/privacidade`;
+  - opção de a barbearia confirmar manualmente cada agendamento online.
+- **LGPD:** dono e gerente podem apagar os dados pessoais de um cliente. O histórico de atendimentos continua, sem identificar a pessoa.
+- **Correções:**
+  - o modal não rolava em telas baixas, e o botão de salvar ficava fora da tela no celular;
+  - clicar fora do modal não o fechava;
+  - o painel não tinha navegação no celular.
+- **Testes:** 22 de backend (equipe, encaixe, remarcação, link do cliente, LGPD, configurações, dashboard) e 3 de frontend (formatação de valores e telefone).
 
 ### 2026-11-11 — Correção de estilos no frontend
 - O Tailwind não gerava as classes quando o servidor era iniciado fora da pasta `frontend`, o que deixava o login e o site desalinhados. A config agora é encontrada a partir do próprio frontend.

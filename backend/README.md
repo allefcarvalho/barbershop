@@ -28,12 +28,14 @@ npm test                                  # testes (usam o banco do .env)
 | Grupo | Acesso | Rotas |
 |-------|--------|-------|
 | `/auth` | público | `POST /login`, `POST /refresh` (cookie), `POST /logout`, `GET /me` (auth) |
-| `/public/:slug` | público | `GET /`, `GET /services`, `GET /barbers?serviceId`, `GET /barbers/:id/slots?date&serviceId`, `GET /products`, `POST /bookings` |
+| `/public/:slug` | público | `GET /`, `GET /services`, `GET /barbers?serviceId`, `GET /barbers/:id/slots?date&serviceId`, `GET /products`, `POST /bookings`, `POST /bookings/manage` e `/bookings/manage/cancel` (token no corpo) |
 | `/services` | equipe; escrita dono/gerente | `GET /`, `GET /:id`, `POST`, `PUT /:id`, `DELETE /:id` |
 | `/barbers` | equipe; escrita dono/gerente ou o próprio (perfil) | `GET /`, `GET /:id`, `POST`, `PUT /:id`, `DELETE /:id` |
 | `/availability/:barberId` | equipe; escrita dono/gerente ou o próprio | `GET`, `PUT`, `GET/POST /exceptions`, `DELETE /exceptions/:id` |
-| `/bookings` | equipe (barbeiro: só os seus) | `GET /?date&barberId&status`, `GET /:id`, `PATCH /:id/status` |
-| `/clients` | equipe (barbeiro: só quem atendeu); escrita recepção+ | `GET /?search`, `GET /:id`, `PUT /:id` |
+| `/bookings` | equipe (barbeiro: só os seus) | `GET /?date&barberId&status`, `POST /` (painel ou encaixe com `walkIn`), `GET /:id`, `PATCH /:id/status`, `PATCH /:id/reschedule` |
+| `/clients` | equipe (barbeiro: só quem atendeu); escrita recepção+ | `GET /?search&recurring`, `GET /:id`, `PUT /:id`, `POST /:id/anonymize` (dono/gerente, LGPD) |
+| `/settings` | recepção+ lê; dono/gerente altera | `GET`, `PUT` |
+| `/dashboard` | equipe (barbeiro: só os seus números) | `GET` |
 | `/products` | recepção+; cadastro dono/gerente | `GET /`, `GET /low-stock`, `GET /:id`, `POST`, `PUT`, `DELETE`, `POST/GET /:id/stock` |
 | `/notifications` | dono/gerente | `GET /`, `POST /process` |
 
