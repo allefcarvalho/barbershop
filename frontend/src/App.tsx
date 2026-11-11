@@ -16,6 +16,7 @@ import { ProductsPage } from './pages/admin/ProductsPage';
 import { TeamPage } from './pages/admin/TeamPage';
 import { SchedulePage } from './pages/admin/SchedulePage';
 import { ClientsPage } from './pages/admin/ClientsPage';
+import { SettingsPage } from './pages/admin/SettingsPage';
 
 function App() {
   return (
@@ -36,6 +37,7 @@ function App() {
         <Route path="clientes" element={<ClientsPage />} />
         <Route path="equipe" element={<TeamPage />} />
         <Route path="horarios" element={<SchedulePage />} />
+        <Route path="configuracoes" element={<SettingsPage />} />
       </Route>
     </Routes>
   );

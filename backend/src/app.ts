@@ -17,6 +17,7 @@ import { bookingRoutes } from './modules/booking/booking.routes';
 import { clientRoutes } from './modules/client/client.routes';
 import { productRoutes } from './modules/product/product.routes';
 import { notificationRoutes } from './modules/notification/notification.routes';
+import { tenantRoutes } from './modules/tenant/tenant.routes';
 
 const app = express();
 
@@ -52,6 +53,7 @@ v1.use('/bookings', bookingRoutes);
 v1.use('/clients', clientRoutes);
 v1.use('/products', productRoutes);
 v1.use('/notifications', notificationRoutes);
+v1.use(tenantRoutes);
 
 app.use('/api/v1', v1);
 app.use('/api', (_req, res) => sendError(res, 'Rota não encontrada', 404, 'NOT_FOUND'));

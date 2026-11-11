@@ -223,6 +223,32 @@ test('LGPD: só dono/gerente apaga dados do cliente; histórico continua', async
   assert.ok(after.bookings.length > 0);
 });
 
+test('configurações: só dono/gerente altera; fuso inválido é recusado', async () => {
+  const barber = await A.login(A.barber1);
+  const owner = await A.login(A.owner);
+  const current = (await call('GET', '/settings', { token: owner })).json.data;
+  const { slug: _slug, ...body } = current;
+  assert.equal((await call('PUT', '/settings', { token: barber, body })).status, 403);
+  assert.equal((await call('PUT', '/settings', { token: owner, body: { ...body, timezone: 'Lua/Base' } })).status, 422);
+  const ok = await call('PUT', '/settings', { token: owner, body: { ...body, slotStepMinutes: 30 } });
+  assert.equal(ok.status, 200);
+  assert.equal(ok.json.data.slotStepMinutes, 30);
+  await call('PUT', '/settings', { token: owner, body });
+});
+
+test('dashboard: barbeiro vê só os próprios números e não vê estoque', async () => {
+  const b2 = await A.login(A.barber2);
+  const owner = await A.login(A.owner);
+  const mine = (await call('GET', '/dashboard', { token: b2 })).json.data;
+  const all = (await call('GET', '/dashboard', { token: owner })).json.data;
+  assert.equal(mine.lowStock, null);
+  assert.equal(typeof all.lowStock, 'number');
+  const ownToday = await prisma.booking.count({
+    where: { barberId: A.barber2.id, status: { not: 'CANCELLED' }, startAt: { gte: time.dayRangeUtc(all.date, tz).start, lt: time.dayRangeUtc(all.date, tz).end } },
+  });
+  assert.equal(mine.today.total, ownToday);
+});
+
 test('estoque: saída maior que o saldo é recusada', async () => {
   const product = await prisma.product.create({ data: { tenantId: A.tenant.id, name: 'Pomada', description: 'pomada', priceCents: 4500, stockQuantity: 3 } });
   const token = await A.login(A.owner);

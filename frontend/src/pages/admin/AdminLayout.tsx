@@ -5,7 +5,7 @@
 import { Link, Navigate, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { authService, type SessionUser } from '../../services/auth.service';
-import { LayoutDashboard, Calendar, Scissors, Package, LogOut, ChevronRight, Users, Clock, UserRound } from 'lucide-react';
+import { LayoutDashboard, Calendar, Scissors, Package, LogOut, ChevronRight, Users, Clock, UserRound, Settings } from 'lucide-react';
 import clsx from 'clsx';
 import logo from '../../assets/logo.png';
 
@@ -22,6 +22,7 @@ const sidebarLinks: { label: string; href: string; icon: typeof Calendar; roles?
   { label: 'Equipe', href: '/admin/equipe', icon: Users, roles: MANAGERS },
   { label: 'Serviços', href: '/admin/servicos', icon: Scissors, roles: MANAGERS },
   { label: 'Produtos', href: '/admin/produtos', icon: Package, roles: FRONT_DESK },
+  { label: 'Configurações', href: '/admin/configuracoes', icon: Settings, roles: FRONT_DESK },
 ];
 
 const ROLE_LABEL: Record<SessionUser['role'], string> = {
@@ -133,7 +134,7 @@ export function AdminLayout() {
         </header>
 
         {/* Navegação no celular/tablet (a barra lateral só aparece a partir de lg) */}
-        <nav className="lg:hidden flex gap-1 overflow-x-auto px-4 py-2 border-b border-white/5 bg-panel" aria-label="Seções do painel">
+        <nav className="lg:hidden flex gap-1 overflow-x-auto scrollbar-hide px-4 py-2 border-b border-white/5 bg-panel" aria-label="Seções do painel">
           {links.map((link) => {
             const Icon = link.icon;
             const active = location.pathname === link.href;
