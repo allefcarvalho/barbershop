@@ -52,4 +52,16 @@ export const clientService = {
     await this.get(auth, id);
     return prisma.client.update({ where: { id }, data });
   },
+
+  /**
+   * LGPD: pedido de exclusão. Apaga os dados pessoais e mantém os atendimentos
+   * (sem identificar ninguém) para relatórios e obrigações fiscais.
+   */
+  async anonymize(auth: AuthContext, id: string) {
+    await this.get(auth, id);
+    return prisma.client.update({
+      where: { id },
+      data: { name: 'Cliente removido', phone: `anon:${id}`, email: null, notes: null, consentAt: null },
+    });
+  },
 };

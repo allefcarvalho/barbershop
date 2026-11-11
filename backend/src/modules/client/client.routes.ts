@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { clientService } from './client.service';
 import { updateClientSchema, clientFiltersSchema } from './client.schema';
-import { requireRole, FRONT_DESK } from '../../middlewares/auth.middleware';
+import { requireRole, FRONT_DESK, MANAGERS } from '../../middlewares/auth.middleware';
 import { sendSuccess, sendPaginated } from '../../utils/apiResponse';
 
 // Montado em /api/v1/clients (autenticado).
@@ -16,6 +16,10 @@ router.get('/:id', async (req, res) => sendSuccess(res, await clientService.get(
 
 router.put('/:id', requireRole(...FRONT_DESK), async (req, res) => {
   sendSuccess(res, await clientService.update(req.auth!, String(req.params.id), updateClientSchema.parse(req.body)), 'Cliente atualizado');
+});
+
+router.post('/:id/anonymize', requireRole(...MANAGERS), async (req, res) => {
+  sendSuccess(res, await clientService.anonymize(req.auth!, String(req.params.id)), 'Dados do cliente removidos');
 });
 
 export { router as clientRoutes };

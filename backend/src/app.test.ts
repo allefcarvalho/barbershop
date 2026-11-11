@@ -211,6 +211,18 @@ test('barbearia que exige confirmação: agendamento online nasce PENDING', asyn
   assert.equal(r.json.data.status, 'PENDING');
 });
 
+test('LGPD: só dono/gerente apaga dados do cliente; histórico continua', async () => {
+  const client = await prisma.client.findUniqueOrThrow({ where: { tenantId_phone: { tenantId: A.tenant.id, phone: '+5511900000001' } } });
+  const barber = await A.login(A.barber1);
+  assert.equal((await call('POST', `/clients/${client.id}/anonymize`, { token: barber })).status, 403);
+  const owner = await A.login(A.owner);
+  assert.equal((await call('POST', `/clients/${client.id}/anonymize`, { token: owner })).status, 200);
+  const after = await prisma.client.findUniqueOrThrow({ where: { id: client.id }, include: { bookings: true } });
+  assert.equal(after.name, 'Cliente removido');
+  assert.ok(!after.phone.includes('9000'));
+  assert.ok(after.bookings.length > 0);
+});
+
 test('estoque: saída maior que o saldo é recusada', async () => {
   const product = await prisma.product.create({ data: { tenantId: A.tenant.id, name: 'Pomada', description: 'pomada', priceCents: 4500, stockQuantity: 3 } });
   const token = await A.login(A.owner);

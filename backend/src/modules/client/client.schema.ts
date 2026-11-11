@@ -5,6 +5,7 @@ export const updateClientSchema = z.object({
   name: z.string().trim().min(2).max(100).optional(),
   phone: phoneSchema.optional(),
   email: z.string().email().nullable().optional(),
+  notes: z.string().trim().max(1000).nullable().optional(),
 });
 
 export const clientFiltersSchema = z.object({
