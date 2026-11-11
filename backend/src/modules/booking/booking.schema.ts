@@ -26,8 +26,18 @@ export const createBookingSchema = z.object({
 
 /** Agendamento pela equipe. Encaixe (walkIn) começa agora e dispensa data/hora. */
 export const staffBookingSchema = z
-  .object({ ...clientFields, date: date.optional(), time: time.optional(), walkIn: z.boolean().optional() })
+  .object({ ...clientFields, date: date.optional(), time: time.optional(), walkIn: z.boolean().optional(), acceptMessages: z.boolean().optional() })
   .refine((b) => b.walkIn || (b.date && b.time), 'Informe data e hora');
+
+/** Lista de espera (site público). */
+export const waitlistSchema = z.object({
+  clientName: clientFields.clientName,
+  clientPhone: clientFields.clientPhone,
+  serviceId: clientFields.serviceId,
+  barberId: z.string().uuid().optional(),
+  date,
+  acceptTerms: z.literal(true, { errorMap: () => ({ message: 'É preciso aceitar receber mensagens' }) }),
+});
 
 export const rescheduleSchema = z.object({ date, time, barberId: z.string().uuid().optional() });
 

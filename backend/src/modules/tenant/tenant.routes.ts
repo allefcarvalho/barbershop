@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { z } from 'zod';
 import { BookingStatus, Prisma } from '@prisma/client';
 import { prisma } from '../../config/database';
+import { env } from '../../config/env';
 import { requireRole, MANAGERS, FRONT_DESK } from '../../middlewares/auth.middleware';
 import { sendSuccess } from '../../utils/apiResponse';
 import { dayRangeUtc, utcToZoned } from '../../utils/time';
@@ -20,6 +21,9 @@ const settingsSelect = {
   recurringThreshold: true,
   maxActiveBookingsPerPhone: true,
   requireConfirmation: true,
+  reminderHours: true,
+  noShowLimit: true,
+  whatsappPhoneNumberId: true,
 } satisfies Prisma.TenantSelect;
 
 const isTimezone = (tz: string) => {
@@ -41,10 +45,15 @@ const settingsSchema = z.object({
   recurringThreshold: z.number().int().min(1).max(100),
   maxActiveBookingsPerPhone: z.number().int().min(1).max(20),
   requireConfirmation: z.boolean(),
+  reminderHours: z.number().int().min(0).max(168),
+  noShowLimit: z.number().int().min(0).max(20),
+  whatsappPhoneNumberId: z.string().trim().regex(/^d{5,30}$/, 'ID do número inválido (só dígitos)').nullable(),
 });
 
 router.get('/settings', requireRole(...FRONT_DESK), async (req, res) => {
-  sendSuccess(res, await prisma.tenant.findUniqueOrThrow({ where: { id: req.auth!.tenantId }, select: settingsSelect }));
+  const t = await prisma.tenant.findUniqueOrThrow({ where: { id: req.auth!.tenantId }, select: settingsSelect });
+  // whatsappReady: o servidor tem o token da Meta; sem ele as mensagens só vão para o log.
+  sendSuccess(res, { ...t, whatsappReady: Boolean(env.WHATSAPP_TOKEN) });
 });
 
 router.put('/settings', requireRole(...MANAGERS), async (req, res) => {

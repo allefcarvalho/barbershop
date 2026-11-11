@@ -4,6 +4,8 @@ import { prisma } from '../../config/database';
 import { HttpError } from '../../utils/apiResponse';
 import { addMinutes, dayRangeUtc, utcToZoned, zonedToUtc } from '../../utils/time';
 import { availabilityService } from '../availability/availability.service';
+import { enqueue, enqueueReminder } from '../notification/queue';
+import { env } from '../../config/env';
 import type { AuthContext } from '../../middlewares/auth.middleware';
 import type { CreateBookingInput, StaffBookingInput, RescheduleInput, BookingFiltersInput } from './booking.schema';
 
@@ -68,6 +70,38 @@ export async function completeBooking(
   if (!client.isRecurring && client.totalBookings >= tenant.recurringThreshold) {
     await tx.client.update({ where: { id: client.id }, data: { isRecurring: true } });
   }
+}
+
+/**
+ * Cancela um agendamento em aberto, avisa o cliente e quem está na lista de espera daquele dia
+ * (até 3 pessoas, por ordem de chegada; quem agendar primeiro leva a vaga).
+ */
+export async function cancelBooking(
+  tx: Prisma.TransactionClient,
+  booking: { id: string; tenantId: string; clientId: string; barberId: string; startAt: Date },
+) {
+  const { count } = await tx.booking.updateMany({ where: { id: booking.id, status: { in: ACTIVE } }, data: { status: 'CANCELLED' } });
+  if (count === 0) throw new HttpError(409, 'O agendamento foi alterado por outra pessoa. Recarregue.', 'STALE');
+  await enqueue(tx, { tenantId: booking.tenantId, clientId: booking.clientId, bookingId: booking.id, type: 'CANCELLATION' });
+
+  const tenant = await tx.tenant.findUniqueOrThrow({ where: { id: booking.tenantId } });
+  const date = utcToZoned(booking.startAt, tenant.timezone).date;
+  if (booking.startAt < new Date()) return;
+  const waiting = await tx.waitlistEntry.findMany({
+    where: { tenantId: tenant.id, date: new Date(date), notifiedAt: null, OR: [{ barberId: null }, { barberId: booking.barberId }] },
+    include: { service: { select: { name: true } } },
+    orderBy: { createdAt: 'asc' },
+    take: 3,
+  });
+  for (const w of waiting) {
+    await enqueue(tx, {
+      tenantId: tenant.id,
+      clientId: w.clientId,
+      type: 'WAITLIST',
+      payload: { service: w.service.name, date, link: `${env.PUBLIC_APP_URL}/agendar?service=${w.serviceId}&date=${date}` },
+    });
+  }
+  if (waiting.length) await tx.waitlistEntry.updateMany({ where: { id: { in: waiting.map((w) => w.id) } }, data: { notifiedAt: new Date() } });
 }
 
 interface NewBooking {
@@ -135,13 +169,9 @@ async function insertBooking(b: NewBooking) {
         include: listInclude,
       });
 
-      await tx.notification.create({
-        data: {
-          bookingId: booking.id,
-          type: 'CONFIRMATION',
-          payload: JSON.stringify({ bookingId: booking.id, startAt: b.startAt, serviceName: service.name, barberName: barber.user.name }),
-        },
-      });
+      // Confirmação com o link do cliente (o token sai do banco assim que a mensagem é enviada) + lembrete.
+      await enqueue(tx, { tenantId: b.tenant.id, clientId: client.id, bookingId: booking.id, type: 'CONFIRMATION', payload: { manageToken } });
+      await enqueueReminder(tx, b.tenant, { id: booking.id, clientId: client.id, startAt: b.startAt });
 
       return { booking, manageToken };
     });
@@ -163,12 +193,21 @@ export const bookingService = {
       throw new HttpError(409, 'Horário indisponível. Escolha outro.', 'SLOT_UNAVAILABLE');
     }
 
+    // Política de faltas: quem faltou demais recentemente fica pendente até a equipe confirmar.
+    let status: BookingStatus = tenant.requireConfirmation ? 'PENDING' : 'CONFIRMED';
+    if (tenant.noShowLimit > 0) {
+      const noShows = await prisma.booking.count({
+        where: { tenantId: tenant.id, client: { phone: data.clientPhone }, status: 'NO_SHOW', startAt: { gte: addMinutes(new Date(), -180 * 24 * 60) } },
+      });
+      if (noShows >= tenant.noShowLimit) status = 'PENDING';
+    }
+
     const { booking, manageToken } = await insertBooking({
       tenant,
       ...data,
       startAt: zonedToUtc(data.date, data.time, tenant.timezone),
       source: 'ONLINE',
-      status: tenant.requireConfirmation ? 'PENDING' : 'CONFIRMED',
+      status,
       consent: data.acceptTerms,
       enforceActiveLimit: true,
     });
@@ -206,6 +245,7 @@ export const bookingService = {
       startAt,
       source: walkIn ? 'WALK_IN' : 'PANEL',
       status: 'CONFIRMED',
+      consent: data.acceptMessages, // cliente autorizou mensagens no balcão/telefone
     });
     return booking;
   },
@@ -253,13 +293,11 @@ export const bookingService = {
     return prisma.$transaction(async (tx) => {
       if (status === 'COMPLETED') {
         await completeBooking(tx, booking, auth.tenantId);
+      } else if (status === 'CANCELLED') {
+        await cancelBooking(tx, booking);
       } else {
         const { count } = await tx.booking.updateMany({ where: { id, status: booking.status }, data: { status } });
         if (count === 0) throw new HttpError(409, 'O agendamento foi alterado por outra pessoa. Recarregue.', 'STALE');
-      }
-
-      if (status === 'CANCELLED') {
-        await tx.notification.create({ data: { bookingId: id, type: 'CANCELLATION' } });
       }
 
       return tx.booking.findUniqueOrThrow({ where: { id }, include: listInclude });
@@ -280,11 +318,13 @@ export const bookingService = {
     const tenant = await prisma.tenant.findUniqueOrThrow({ where: { id: auth.tenantId } });
     const startAt = zonedToUtc(data.date, data.time, tenant.timezone);
     try {
-      return await prisma.booking.update({
+      const updated = await prisma.booking.update({
         where: { id },
         data: { barberId, startAt, endAt: addMinutes(startAt, booking.durationMinutes) },
         include: listInclude,
       });
+      await enqueueReminder(prisma, tenant, { id, clientId: booking.clientId, startAt }); // o lembrete antigo é descartado no envio
+      return updated;
     } catch (e) {
       if (isOverlapError(e)) throw slotTaken();
       throw e;
@@ -326,10 +366,7 @@ export const bookingService = {
         'CANCEL_NOT_ALLOWED',
       );
     }
-    await prisma.$transaction([
-      prisma.booking.updateMany({ where: { id: booking.id, status: { in: ACTIVE } }, data: { status: 'CANCELLED' } }),
-      prisma.notification.create({ data: { bookingId: booking.id, type: 'CANCELLATION' } }),
-    ]);
+    await prisma.$transaction((tx) => cancelBooking(tx, booking));
     return { ...view, status: 'CANCELLED' as const, canCancel: false };
   },
 };

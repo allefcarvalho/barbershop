@@ -12,6 +12,13 @@ const envSchema = z.object({
   REDIS_URL: z.string().url().optional(),
   /** Nº de proxies confiáveis à frente da API (load balancer). 0 = nenhum. */
   TRUST_PROXY: z.coerce.number().int().min(0).default(0),
+  /** Endereço do site (links enviados ao cliente). */
+  PUBLIC_APP_URL: z.string().url().default('http://localhost:5173'),
+  // WhatsApp Cloud API (Meta). Sem token, as mensagens só vão para o log (canal interno).
+  WHATSAPP_TOKEN: z.string().optional(),
+  WHATSAPP_APP_SECRET: z.string().optional(), // valida a assinatura do webhook
+  WHATSAPP_VERIFY_TOKEN: z.string().optional(), // verificação do webhook no painel da Meta
+  WHATSAPP_API_VERSION: z.string().default('v21.0'),
 });
 
 const parsed = envSchema.safeParse(process.env);

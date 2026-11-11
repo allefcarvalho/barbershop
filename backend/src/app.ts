@@ -19,6 +19,7 @@ import { productRoutes } from './modules/product/product.routes';
 import { notificationRoutes } from './modules/notification/notification.routes';
 import { tenantRoutes } from './modules/tenant/tenant.routes';
 import { financeRoutes } from './modules/finance/finance.routes';
+import { whatsappWebhookRoutes } from './modules/notification/webhook.routes';
 
 const app = express();
 
@@ -26,7 +27,8 @@ app.set('trust proxy', env.TRUST_PROXY); // IP real do cliente atrás do load ba
 app.disable('x-powered-by');
 app.use(helmet());
 app.use(cors({ origin: env.CORS_ORIGIN.split(','), credentials: true }));
-app.use(express.json({ limit: '100kb' }));
+// Guarda o corpo bruto: o webhook do WhatsApp valida a assinatura HMAC sobre os bytes originais.
+app.use(express.json({ limit: '100kb', verify: (req, _res, buf) => ((req as express.Request & { rawBody?: Buffer }).rawBody = buf) }));
 if (env.NODE_ENV !== 'test') app.use(morgan(isProd ? 'combined' : 'dev'));
 
 // Liveness/readiness para o load balancer (fora do rate limit).
@@ -44,6 +46,7 @@ app.use('/api', apiLimiter);
 const v1 = express.Router();
 v1.use('/auth', authRoutes);
 v1.use('/public/:slug', publicTenant, publicRoutes);
+v1.use('/webhooks/whatsapp', whatsappWebhookRoutes);
 
 // Daqui para baixo: autenticado, tenant vem do token.
 v1.use(authenticate);

@@ -50,12 +50,15 @@ enum NotificationType {
   CONFIRMATION
   REMINDER
   CANCELLATION
+  WAITLIST // abriu horário para quem está na lista de espera
+  MESSAGE // resposta livre (ex.: retorno ao "1"/"2" do cliente)
 }
 
 enum NotificationStatus {
   PENDING
   SENT
   FAILED
+  SKIPPED // não faz mais sentido enviar (agendamento cancelado/remarcado, cliente saiu)
 }
 
 /// Uma barbearia. Configurações de agenda ficam aqui (antes eram constantes no código).
@@ -72,16 +75,24 @@ model Tenant {
   maxActiveBookingsPerPhone Int      @default(2) @map("max_active_bookings_per_phone")
   /// true = agendamento online nasce PENDING e a equipe confirma (RN04)
   requireConfirmation       Boolean  @default(false) @map("require_confirmation")
+  /// Lembrete automático X horas antes (0 = desligado)
+  reminderHours             Int      @default(24) @map("reminder_hours")
+  /// Faltas (6 meses) a partir das quais o agendamento online fica pendente de confirmação (0 = desligado)
+  noShowLimit               Int      @default(0) @map("no_show_limit")
+  /// Número da barbearia na WhatsApp Cloud API (o token fica no servidor, nunca no banco)
+  whatsappPhoneNumberId     String?  @unique @map("whatsapp_phone_number_id")
   active                    Boolean  @default(true)
   createdAt                 DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
 
-  memberships Membership[]
-  clients     Client[]
-  services    Service[]
-  bookings    Booking[]
-  products    Product[]
-  orders      Order[]
-  registers   CashRegister[]
+  memberships   Membership[]
+  clients       Client[]
+  services      Service[]
+  bookings      Booking[]
+  products      Product[]
+  orders        Order[]
+  registers     CashRegister[]
+  notifications Notification[]
+  waitlist      WaitlistEntry[]
 
   @@map("tenants")
 }
@@ -150,22 +161,26 @@ model RefreshToken {
 }
 
 model Client {
-  id            String    @id @default(uuid())
-  tenantId      String    @map("tenant_id")
-  name          String
-  phone         String // E.164, ex.: +5511999990000
-  email         String?
-  totalBookings Int       @default(0) @map("total_bookings")
-  lastVisit     DateTime? @map("last_visit") @db.Timestamptz(3)
-  isRecurring   Boolean   @default(false) @map("is_recurring")
-  notes         String? // preferências (ex.: "máquina 2 nas laterais")
+  id               String    @id @default(uuid())
+  tenantId         String    @map("tenant_id")
+  name             String
+  phone            String // E.164, ex.: +5511999990000
+  email            String?
+  totalBookings    Int       @default(0) @map("total_bookings")
+  lastVisit        DateTime? @map("last_visit") @db.Timestamptz(3)
+  isRecurring      Boolean   @default(false) @map("is_recurring")
+  notes            String? // preferências (ex.: "máquina 2 nas laterais")
   /// LGPD: quando aceitou a política de privacidade / mensagens
-  consentAt     DateTime? @map("consent_at") @db.Timestamptz(3)
-  createdAt     DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  consentAt        DateTime? @map("consent_at") @db.Timestamptz(3)
+  /// Respondeu "SAIR" no WhatsApp: não recebe mais mensagens
+  whatsappOptOutAt DateTime? @map("whatsapp_opt_out_at") @db.Timestamptz(3)
+  createdAt        DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
 
-  tenant   Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  bookings Booking[]
-  orders   Order[]
+  tenant        Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  bookings      Booking[]
+  orders        Order[]
+  notifications Notification[]
+  waitlist      WaitlistEntry[]
 
   @@unique([tenantId, phone])
   @@map("clients")
@@ -186,6 +201,8 @@ model Service {
   barbers    BarberService[]
   bookings   Booking[]
   orderItems OrderItem[]
+
+  waitlist WaitlistEntry[]
 
   @@index([tenantId, sortOrder])
   @@map("services")
@@ -300,20 +317,52 @@ model StockMovement {
   @@map("stock_movements")
 }
 
+/// Fila de mensagens (o worker envia). Agendada por scheduledFor; retentativa com espera crescente.
 model Notification {
-  id        String              @id @default(uuid())
-  bookingId String              @map("booking_id")
-  channel   NotificationChannel @default(INTERNAL)
-  type      NotificationType
-  status    NotificationStatus  @default(PENDING)
-  payload   String?
-  sentAt    DateTime?           @map("sent_at") @db.Timestamptz(3)
-  createdAt DateTime            @default(now()) @map("created_at") @db.Timestamptz(3)
+  id           String              @id @default(uuid())
+  tenantId     String              @map("tenant_id")
+  clientId     String              @map("client_id")
+  bookingId    String?             @map("booking_id")
+  channel      NotificationChannel @default(INTERNAL)
+  type         NotificationType
+  status       NotificationStatus  @default(PENDING)
+  /// Dados extras da mensagem (ex.: link do cliente até ser enviado, texto de resposta)
+  payload      Json?
+  scheduledFor DateTime            @default(now()) @map("scheduled_for") @db.Timestamptz(3)
+  attempts     Int                 @default(0)
+  lastError    String?             @map("last_error")
+  /// ID da mensagem no WhatsApp (para o webhook atualizar entregue/lida/falhou)
+  externalId   String?             @unique @map("external_id")
+  sentAt       DateTime?           @map("sent_at") @db.Timestamptz(3)
+  createdAt    DateTime            @default(now()) @map("created_at") @db.Timestamptz(3)
 
-  booking Booking @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  tenant  Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  client  Client   @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  booking Booking? @relation(fields: [bookingId], references: [id], onDelete: Cascade)
 
-  @@index([status, createdAt])
+  @@index([status, scheduledFor])
+  @@index([tenantId, createdAt])
   @@map("notifications")
+}
+
+/// Lista de espera: cliente quer um horário num dia sem vaga; é avisado se alguém cancelar.
+model WaitlistEntry {
+  id         String    @id @default(uuid())
+  tenantId   String    @map("tenant_id")
+  clientId   String    @map("client_id")
+  serviceId  String    @map("service_id")
+  barberId   String?   @map("barber_id") // null = qualquer profissional
+  date       DateTime  @db.Date
+  notifiedAt DateTime? @map("notified_at") @db.Timestamptz(3)
+  createdAt  DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  tenant  Tenant  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  client  Client  @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  service Service @relation(fields: [serviceId], references: [id], onDelete: Cascade)
+
+  @@unique([clientId, serviceId, date])
+  @@index([tenantId, date])
+  @@map("waitlist_entries")
 }
 
 // =============================================

@@ -4,7 +4,7 @@ import { notificationFiltersSchema } from './notification.schema';
 import { requireRole, MANAGERS } from '../../middlewares/auth.middleware';
 import { sendSuccess, sendPaginated } from '../../utils/apiResponse';
 
-// Montado em /api/v1/notifications (autenticado). O webhook do WhatsApp volta na Fase 3, com verificação de assinatura.
+// Montado em /api/v1/notifications (autenticado). O envio é feito pelo worker (npm run worker).
 const router = Router();
 
 router.use(requireRole(...MANAGERS));
@@ -14,6 +14,9 @@ router.get('/', async (req, res) => {
   sendPaginated(res, r.notifications, r.total, r.page, r.pageSize);
 });
 
-router.post('/process', async (req, res) => sendSuccess(res, await notificationService.processPending(req.auth!.tenantId)));
+router.post('/:id/retry', async (req, res) => {
+  await notificationService.retry(req.auth!.tenantId, String(req.params.id));
+  sendSuccess(res, null, 'Mensagem colocada na fila de novo');
+});
 
 export { router as notificationRoutes };
