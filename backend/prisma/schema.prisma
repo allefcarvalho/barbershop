@@ -28,6 +28,12 @@ enum BookingStatus {
   NO_SHOW
 }
 
+enum BookingSource {
+  ONLINE
+  PANEL
+  WALK_IN
+}
+
 enum StockMovementType {
   IN
   OUT
@@ -64,6 +70,8 @@ model Tenant {
   clientCancelMinHours      Int      @default(2) @map("client_cancel_min_hours")
   recurringThreshold        Int      @default(3) @map("recurring_threshold")
   maxActiveBookingsPerPhone Int      @default(2) @map("max_active_bookings_per_phone")
+  /// true = agendamento online nasce PENDING e a equipe confirma (RN04)
+  requireConfirmation       Boolean  @default(false) @map("require_confirmation")
   active                    Boolean  @default(true)
   createdAt                 DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
 
@@ -143,6 +151,9 @@ model Client {
   totalBookings Int       @default(0) @map("total_bookings")
   lastVisit     DateTime? @map("last_visit") @db.Timestamptz(3)
   isRecurring   Boolean   @default(false) @map("is_recurring")
+  notes         String? // preferências (ex.: "máquina 2 nas laterais")
+  /// LGPD: quando aceitou a política de privacidade / mensagens
+  consentAt     DateTime? @map("consent_at") @db.Timestamptz(3)
   createdAt     DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
 
   tenant   Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
@@ -225,6 +236,9 @@ model Booking {
   priceCents      Int           @map("price_cents")
   durationMinutes Int           @map("duration_minutes")
   notes           String?
+  source          BookingSource @default(ONLINE)
+  /// Hash do token do link "gerenciar agendamento" enviado ao cliente (o token em si nunca é salvo)
+  manageTokenHash String?       @unique @map("manage_token_hash")
   createdAt       DateTime      @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt       DateTime      @updatedAt @map("updated_at") @db.Timestamptz(3)
 

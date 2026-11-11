@@ -8,7 +8,8 @@ import { BookingPage } from './pages/BookingPage';
 import { LoginPage } from './pages/LoginPage';
 import { AdminLayout } from './pages/admin/AdminLayout';
 import { DashboardPage } from './pages/admin/DashboardPage';
-import { AgendaPage, ServicesPage, ProductsPage } from './pages/admin/AdminPages';
+import { AgendaPage } from './pages/admin/AgendaPage';
+import { ServicesPage, ProductsPage } from './pages/admin/AdminPages';
 
 function App() {
   return (

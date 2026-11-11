@@ -53,8 +53,20 @@ router.get('/barbers/:barberId/slots', async (req, res) => {
 router.get('/products', async (req, res) => sendSuccess(res, await productService.listPublic(req.tenant!.id)));
 
 router.post('/bookings', bookingLimiter, async (req, res) => {
-  const booking = await bookingService.create(req.tenant!, createBookingSchema.parse(req.body));
-  sendCreated(res, booking, 'Agendamento confirmado!');
+  const booking = await bookingService.createPublic(req.tenant!, createBookingSchema.parse(req.body));
+  sendCreated(res, booking, booking.status === 'PENDING' ? 'Agendamento recebido! A barbearia vai confirmar.' : 'Agendamento confirmado!');
+});
+
+// Link "gerenciar agendamento": o token vai no corpo (não na URL) para não aparecer em logs de acesso.
+const manageSchema = z.object({ token: z.string().min(20).max(100) });
+
+router.post('/bookings/manage', bookingLimiter, async (req, res) => {
+  const { view } = await bookingService.findByManageToken(req.tenant!, manageSchema.parse(req.body).token);
+  sendSuccess(res, view);
+});
+
+router.post('/bookings/manage/cancel', bookingLimiter, async (req, res) => {
+  sendSuccess(res, await bookingService.cancelByClient(req.tenant!, manageSchema.parse(req.body).token), 'Agendamento cancelado');
 });
 
 export { router as publicRoutes };

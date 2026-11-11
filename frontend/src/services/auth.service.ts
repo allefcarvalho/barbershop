@@ -7,7 +7,7 @@ export interface SessionUser {
   avatarUrl: string | null;
   membershipId: string;
   role: 'OWNER' | 'MANAGER' | 'RECEPTIONIST' | 'BARBER';
-  tenant: { slug: string; name: string };
+  tenant: { slug: string; name: string; timezone: string };
 }
 
 export const authService = {

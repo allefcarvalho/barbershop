@@ -105,7 +105,7 @@ export const authService = {
 
   profile(
     user: { id: string; name: string; email: string; avatarUrl: string | null },
-    m: { id: string; role: string; tenant: { slug: string; name: string } },
+    m: { id: string; role: string; tenant: { slug: string; name: string; timezone: string } },
   ) {
     return {
       id: user.id,
@@ -114,7 +114,7 @@ export const authService = {
       avatarUrl: user.avatarUrl,
       membershipId: m.id,
       role: m.role,
-      tenant: { slug: m.tenant.slug, name: m.tenant.name },
+      tenant: { slug: m.tenant.slug, name: m.tenant.name, timezone: m.tenant.timezone },
     };
   },
 };

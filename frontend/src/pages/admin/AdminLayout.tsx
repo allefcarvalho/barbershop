@@ -9,11 +9,16 @@ import { LayoutDashboard, Calendar, Scissors, Package, LogOut, ChevronRight } fr
 import clsx from 'clsx';
 import logo from '../../assets/logo.png';
 
-const sidebarLinks = [
+type Role = SessionUser['role'];
+const MANAGERS: Role[] = ['OWNER', 'MANAGER'];
+const FRONT_DESK: Role[] = ['OWNER', 'MANAGER', 'RECEPTIONIST'];
+
+// roles ausente = todos os papéis veem o link
+const sidebarLinks: { label: string; href: string; icon: typeof Calendar; roles?: Role[] }[] = [
   { label: 'Dashboard', href: '/admin', icon: LayoutDashboard },
   { label: 'Agenda', href: '/admin/agenda', icon: Calendar },
-  { label: 'Serviços', href: '/admin/servicos', icon: Scissors },
-  { label: 'Produtos', href: '/admin/produtos', icon: Package },
+  { label: 'Serviços', href: '/admin/servicos', icon: Scissors, roles: MANAGERS },
+  { label: 'Produtos', href: '/admin/produtos', icon: Package, roles: FRONT_DESK },
 ];
 
 const ROLE_LABEL: Record<SessionUser['role'], string> = {
@@ -50,6 +55,7 @@ export function AdminLayout() {
     navigate('/login', { replace: true });
   };
   const initials = user.name.split(' ').map((p) => p[0]).slice(0, 2).join('').toUpperCase();
+  const links = sidebarLinks.filter((l) => !l.roles || l.roles.includes(user.role));
 
   return (
     <div className="flex min-h-screen bg-dark">
@@ -66,7 +72,7 @@ export function AdminLayout() {
 
         {/* Nav */}
         <nav className="flex-1 py-4 px-3 space-y-1">
-          {sidebarLinks.map((link) => {
+          {links.map((link) => {
             const Icon = link.icon;
             const active = location.pathname === link.href;
             return (
@@ -101,11 +107,11 @@ export function AdminLayout() {
       </aside>
 
       {/* Main content */}
-      <main className="flex-1 flex flex-col">
+      <main className="flex-1 flex flex-col min-w-0">
         {/* Topbar */}
-        <header className="flex items-center justify-between px-6 lg:px-8 py-4 border-b border-white/5 bg-panel/50 backdrop-blur-sm">
-          <h2 className="text-lg font-display font-semibold text-white">
-            {sidebarLinks.find((l) => l.href === location.pathname)?.label || 'Admin'}
+        <header className="flex items-center justify-between gap-3 px-4 sm:px-6 lg:px-8 py-4 border-b border-white/5 bg-panel/50 backdrop-blur-sm">
+          <h2 className="text-lg font-display font-semibold text-white truncate">
+            {links.find((l) => l.href === location.pathname)?.label || 'Admin'}
           </h2>
           <div className="flex items-center gap-3">
             <div className="text-right hidden sm:block">
@@ -123,8 +129,29 @@ export function AdminLayout() {
           </div>
         </header>
 
+        {/* Navegação no celular/tablet (a barra lateral só aparece a partir de lg) */}
+        <nav className="lg:hidden flex gap-1 overflow-x-auto px-4 py-2 border-b border-white/5 bg-panel" aria-label="Seções do painel">
+          {links.map((link) => {
+            const Icon = link.icon;
+            const active = location.pathname === link.href;
+            return (
+              <Link
+                key={link.href}
+                to={link.href}
+                className={clsx(
+                  'flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-medium whitespace-nowrap font-body',
+                  active ? 'bg-brand-500/10 text-brand-400' : 'text-[#8A8680] hover:text-white',
+                )}
+              >
+                <Icon className="w-3.5 h-3.5" />
+                {link.label}
+              </Link>
+            );
+          })}
+        </nav>
+
         {/* Page content */}
-        <div className="flex-1 p-6 lg:p-8 overflow-auto">
+        <div className="flex-1 p-4 sm:p-6 lg:p-8 overflow-auto">
           <Outlet />
         </div>
       </main>

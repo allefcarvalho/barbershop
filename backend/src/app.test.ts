@@ -53,7 +53,7 @@ let B: Awaited<ReturnType<typeof makeTenant>>;
 
 const book = (t: typeof A, time: string, phone: string, extra: Record<string, unknown> = {}) =>
   call('POST', `/public/${t.tenant.slug}/bookings`, {
-    body: { clientName: 'Cliente Teste', clientPhone: phone, barberId: t.barber1.id, serviceId: t.s35.id, date, time, ...extra },
+    body: { clientName: 'Cliente Teste', clientPhone: phone, barberId: t.barber1.id, serviceId: t.s35.id, date, time, acceptTerms: true, ...extra },
   });
 
 before(async () => {
@@ -154,6 +154,61 @@ test('login com senha errada e e-mail inexistente dão a mesma resposta', async 
   const ghost = await call('POST', '/auth/login', { body: { email: `ninguem-${run}@test.local`, password: 'errada' } });
   assert.equal(wrong.status, 401);
   assert.deepEqual(wrong.json, ghost.json);
+});
+
+test('agendamento público exige aceite da política (LGPD)', async () => {
+  const r = await book(A, '11:00', '11 90000-0003', { acceptTerms: false });
+  assert.equal(r.status, 422);
+});
+
+test('equipe: barbeiro só agenda na própria agenda; encaixe começa agora', async () => {
+  const t2 = await A.login(A.barber2);
+  const body = { clientName: 'Balcão', clientPhone: '11 95555-0001', serviceId: A.s35.id, date, time: '12:00' };
+  assert.equal((await call('POST', '/bookings', { token: t2, body: { ...body, barberId: A.barber1.id } })).status, 403);
+  const own = await call('POST', '/bookings', { token: t2, body: { ...body, barberId: A.barber2.id } });
+  assert.equal(own.status, 201);
+  assert.equal(own.json.data.source, 'PANEL');
+
+  const walkIn = await call('POST', '/bookings', { token: t2, body: { ...body, barberId: A.barber2.id, date: undefined, time: undefined, walkIn: true } });
+  assert.equal(walkIn.status, 201);
+  assert.equal(walkIn.json.data.source, 'WALK_IN');
+  assert.ok(Math.abs(new Date(walkIn.json.data.startAt).getTime() - Date.now()) < 120_000);
+});
+
+test('remarcar para horário ocupado é recusado; para horário livre funciona', async () => {
+  const owner = await A.login(A.owner);
+  const b = await book(A, '15:00', '11 95555-0002');
+  assert.equal(b.status, 201);
+  const id = b.json.data.id;
+  // 14:00 já está ocupado (teste de concorrência)
+  assert.equal((await call('PATCH', `/bookings/${id}/reschedule`, { token: owner, body: { date, time: '14:10' } })).status, 409);
+  const ok = await call('PATCH', `/bookings/${id}/reschedule`, { token: owner, body: { date, time: '17:00' } });
+  assert.equal(ok.status, 200);
+});
+
+test('link do cliente: consulta e cancela; token errado não acha nada', async () => {
+  const b = await book(A, '11:30', '11 95555-0003');
+  assert.equal(b.status, 201);
+  const token = b.json.data.manageToken as string;
+  const base = `/public/${A.tenant.slug}/bookings/manage`;
+  const view = await call('POST', base, { body: { token } });
+  assert.equal(view.status, 200);
+  assert.equal(view.json.data.canCancel, true);
+  assert.equal(view.json.data.time, '11:30');
+  assert.equal((await call('POST', base, { body: { token: 'x'.repeat(32) } })).status, 404);
+  // token de uma barbearia não funciona no slug de outra
+  assert.equal((await call('POST', `/public/${B.tenant.slug}/bookings/manage`, { body: { token } })).status, 404);
+  const cancel = await call('POST', `${base}/cancel`, { body: { token } });
+  assert.equal(cancel.status, 200);
+  assert.equal(cancel.json.data.status, 'CANCELLED');
+  assert.equal((await call('POST', `${base}/cancel`, { body: { token } })).status, 400);
+});
+
+test('barbearia que exige confirmação: agendamento online nasce PENDING', async () => {
+  await prisma.tenant.update({ where: { id: B.tenant.id }, data: { requireConfirmation: true } });
+  const r = await book(B, '10:00', '11 95555-0004');
+  assert.equal(r.status, 201);
+  assert.equal(r.json.data.status, 'PENDING');
 });
 
 test('estoque: saída maior que o saldo é recusada', async () => {

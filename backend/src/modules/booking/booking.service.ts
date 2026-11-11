@@ -1,10 +1,11 @@
-import { BookingStatus, Prisma, Tenant } from '@prisma/client';
+import { createHash, randomBytes } from 'node:crypto';
+import { BookingSource, BookingStatus, Prisma, Tenant } from '@prisma/client';
 import { prisma } from '../../config/database';
 import { HttpError } from '../../utils/apiResponse';
-import { addMinutes, dayRangeUtc, zonedToUtc } from '../../utils/time';
+import { addMinutes, dayRangeUtc, utcToZoned, zonedToUtc } from '../../utils/time';
 import { availabilityService } from '../availability/availability.service';
 import type { AuthContext } from '../../middlewares/auth.middleware';
-import type { CreateBookingInput, BookingFiltersInput } from './booking.schema';
+import type { CreateBookingInput, StaffBookingInput, RescheduleInput, BookingFiltersInput } from './booking.schema';
 
 const ACTIVE: BookingStatus[] = ['PENDING', 'CONFIRMED'];
 
@@ -16,7 +17,8 @@ const TRANSITIONS: Record<BookingStatus, BookingStatus[]> = {
   NO_SHOW: [],
 };
 
-const slotTaken = () => new HttpError(409, 'Este horário acabou de ser reservado. Escolha outro.', 'SLOT_TAKEN');
+const sha256 = (s: string) => createHash('sha256').update(s).digest('hex');
+const slotTaken = () => new HttpError(409, 'Este horário já está ocupado para este barbeiro.', 'SLOT_TAKEN');
 
 /** Violação da constraint EXCLUDE "bookings_no_overlap" (SQLSTATE 23P01). */
 function isOverlapError(e: unknown) {
@@ -29,81 +31,158 @@ const listInclude = {
   service: { select: { id: true, name: true } },
 } satisfies Prisma.BookingInclude;
 
+/** Barbeiro ativo do tenant que faz o serviço + o serviço ativo. */
+async function getBarberAndService(tenantId: string, barberId: string, serviceId: string) {
+  const [barber, service] = await Promise.all([
+    prisma.membership.findFirst({
+      where: { id: barberId, tenantId, active: true, user: { active: true }, services: { some: { serviceId } } },
+      include: { user: { select: { name: true } } },
+    }),
+    prisma.service.findFirst({ where: { id: serviceId, tenantId, active: true } }),
+  ]);
+  if (!service) throw new HttpError(404, 'Serviço não encontrado', 'SERVICE_NOT_FOUND');
+  if (!barber) throw new HttpError(404, 'Barbeiro não encontrado ou não faz este serviço', 'BARBER_NOT_FOUND');
+  return { barber, service };
+}
+
+interface NewBooking {
+  tenant: Tenant;
+  barberId: string;
+  serviceId: string;
+  startAt: Date;
+  clientName: string;
+  clientPhone: string;
+  clientEmail?: string;
+  notes?: string;
+  source: BookingSource;
+  status: BookingStatus;
+  consent?: boolean;
+  /** Agendamento online: limita agendamentos em aberto por telefone. */
+  enforceActiveLimit?: boolean;
+}
+
+/** Grava cliente + agendamento + notificação numa transação. A constraint EXCLUDE resolve corridas. */
+async function insertBooking(b: NewBooking) {
+  const { barber, service } = await getBarberAndService(b.tenant.id, b.barberId, b.serviceId);
+  const endAt = addMinutes(b.startAt, service.durationMinutes);
+  const manageToken = randomBytes(24).toString('base64url');
+
+  try {
+    return await prisma.$transaction(async (tx) => {
+      // RN07: o telefone identifica o cliente, mas o agendamento NÃO sobrescreve dados existentes.
+      const client = await tx.client.upsert({
+        where: { tenantId_phone: { tenantId: b.tenant.id, phone: b.clientPhone } },
+        update: b.consent ? { consentAt: new Date() } : {},
+        create: {
+          tenantId: b.tenant.id,
+          name: b.clientName,
+          phone: b.clientPhone,
+          email: b.clientEmail,
+          consentAt: b.consent ? new Date() : null,
+        },
+      });
+
+      if (b.enforceActiveLimit) {
+        const active = await tx.booking.count({ where: { clientId: client.id, status: { in: ACTIVE }, startAt: { gt: new Date() } } });
+        if (active >= b.tenant.maxActiveBookingsPerPhone) {
+          throw new HttpError(409, 'Você já tem agendamentos em aberto. Cancele um para marcar outro.', 'TOO_MANY_ACTIVE');
+        }
+      }
+
+      // Nome digitado diferente do cadastro fica registrado para a equipe conferir.
+      const nameNote = client.name !== b.clientName ? `Nome informado: ${b.clientName}` : undefined;
+
+      const booking = await tx.booking.create({
+        data: {
+          tenantId: b.tenant.id,
+          clientId: client.id,
+          barberId: barber.id,
+          serviceId: service.id,
+          startAt: b.startAt,
+          endAt,
+          status: b.status,
+          source: b.source,
+          priceCents: service.priceCents,
+          durationMinutes: service.durationMinutes,
+          notes: [nameNote, b.notes].filter(Boolean).join(' · ') || null,
+          manageTokenHash: sha256(manageToken),
+        },
+        include: listInclude,
+      });
+
+      await tx.notification.create({
+        data: {
+          bookingId: booking.id,
+          type: 'CONFIRMATION',
+          payload: JSON.stringify({ bookingId: booking.id, startAt: b.startAt, serviceName: service.name, barberName: barber.user.name }),
+        },
+      });
+
+      return { booking, manageToken };
+    });
+  } catch (e) {
+    if (isOverlapError(e)) throw slotTaken();
+    throw e;
+  }
+}
+
 export const bookingService = {
   /**
    * Agendamento público. Duas barreiras contra double booking:
    * 1) o horário precisa estar na lista do motor de slots (jornada, bloqueios, antecedência);
    * 2) a constraint EXCLUDE no banco resolve a corrida entre requisições simultâneas.
    */
-  async create(tenant: Tenant, data: CreateBookingInput) {
-    const { date, time } = data;
-    const startAt = zonedToUtc(date, time, tenant.timezone);
-
-    const slots = await availabilityService.getSlots(tenant, data.barberId, date, data.serviceId);
-    if (!slots.includes(time)) {
+  async createPublic(tenant: Tenant, data: CreateBookingInput) {
+    const slots = await availabilityService.getSlots(tenant, data.barberId, data.date, data.serviceId);
+    if (!slots.includes(data.time)) {
       throw new HttpError(409, 'Horário indisponível. Escolha outro.', 'SLOT_UNAVAILABLE');
     }
 
-    const service = await prisma.service.findUniqueOrThrow({ where: { id: data.serviceId } });
-    const endAt = addMinutes(startAt, service.durationMinutes);
+    const { booking, manageToken } = await insertBooking({
+      tenant,
+      ...data,
+      startAt: zonedToUtc(data.date, data.time, tenant.timezone),
+      source: 'ONLINE',
+      status: tenant.requireConfirmation ? 'PENDING' : 'CONFIRMED',
+      consent: data.acceptTerms,
+      enforceActiveLimit: true,
+    });
 
-    try {
-      return await prisma.$transaction(async (tx) => {
-        // RN07: telefone identifica o cliente, mas o agendamento público NÃO sobrescreve dados existentes
-        // (senão qualquer um que soubesse o telefone trocaria nome/e-mail de outra pessoa).
-        const client = await tx.client.upsert({
-          where: { tenantId_phone: { tenantId: tenant.id, phone: data.clientPhone } },
-          update: {},
-          create: { tenantId: tenant.id, name: data.clientName, phone: data.clientPhone, email: data.clientEmail },
-        });
+    // Resposta pública: sem dados do cadastro do cliente. O token só aparece aqui, uma vez.
+    return {
+      id: booking.id,
+      startAt: booking.startAt,
+      endAt: booking.endAt,
+      status: booking.status,
+      priceCents: booking.priceCents,
+      service: booking.service,
+      barber: { id: booking.barber.id, name: booking.barber.user.name },
+      manageToken,
+    };
+  },
 
-        const active = await tx.booking.count({
-          where: { clientId: client.id, status: { in: ACTIVE }, startAt: { gt: new Date() } },
-        });
-        if (active >= tenant.maxActiveBookingsPerPhone) {
-          throw new HttpError(409, 'Você já tem agendamentos em aberto. Cancele um para marcar outro.', 'TOO_MANY_ACTIVE');
-        }
-
-        const booking = await tx.booking.create({
-          data: {
-            tenantId: tenant.id,
-            clientId: client.id,
-            barberId: data.barberId,
-            serviceId: service.id,
-            startAt,
-            endAt,
-            status: 'CONFIRMED',
-            priceCents: service.priceCents,
-            durationMinutes: service.durationMinutes,
-            // Nome digitado diferente do cadastro fica registrado aqui para a equipe conferir.
-            notes: client.name !== data.clientName ? [`Nome informado: ${data.clientName}`, data.notes].filter(Boolean).join(' · ') : data.notes,
-          },
-          include: { barber: { select: { id: true, user: { select: { name: true } } } }, service: { select: { id: true, name: true } } },
-        });
-
-        await tx.notification.create({
-          data: {
-            bookingId: booking.id,
-            type: 'CONFIRMATION',
-            payload: JSON.stringify({ bookingId: booking.id, startAt, serviceName: service.name, barberName: booking.barber.user.name }),
-          },
-        });
-
-        // Resposta pública: sem dados do cadastro do cliente.
-        return {
-          id: booking.id,
-          startAt: booking.startAt,
-          endAt: booking.endAt,
-          status: booking.status,
-          priceCents: booking.priceCents,
-          service: booking.service,
-          barber: { id: booking.barber.id, name: booking.barber.user.name },
-        };
-      });
-    } catch (e) {
-      if (isOverlapError(e)) throw slotTaken();
-      throw e;
+  /**
+   * Agendamento pela equipe (telefone/balcão) ou encaixe.
+   * Pode marcar fora da grade (a equipe decide), mas nunca sobrepor outro atendimento.
+   */
+  async createByStaff(auth: AuthContext, data: StaffBookingInput) {
+    if (auth.role === 'BARBER' && data.barberId !== auth.membershipId) {
+      throw new HttpError(403, 'Barbeiro só agenda na própria agenda', 'FORBIDDEN');
     }
+    const tenant = await prisma.tenant.findUniqueOrThrow({ where: { id: auth.tenantId } });
+    const walkIn = data.walkIn === true;
+    const now = new Date();
+    now.setSeconds(0, 0);
+    const startAt = walkIn ? now : zonedToUtc(data.date!, data.time!, tenant.timezone);
+
+    const { booking } = await insertBooking({
+      tenant,
+      ...data,
+      startAt,
+      source: walkIn ? 'WALK_IN' : 'PANEL',
+      status: 'CONFIRMED',
+    });
+    return booking;
   },
 
   async findAll(auth: AuthContext, f: BookingFiltersInput) {
@@ -167,5 +246,72 @@ export const bookingService = {
 
       return tx.booking.findUniqueOrThrow({ where: { id }, include: listInclude });
     });
+  },
+
+  /** Remarcar (pela equipe): novo horário e/ou barbeiro. Mantém preço e duração da reserva. */
+  async reschedule(auth: AuthContext, id: string, data: RescheduleInput) {
+    const booking = await this.findById(auth, id);
+    if (!ACTIVE.includes(booking.status)) throw new HttpError(400, 'Só é possível remarcar agendamentos em aberto', 'INVALID_TRANSITION');
+
+    const barberId = data.barberId ?? booking.barberId;
+    if (auth.role === 'BARBER' && barberId !== auth.membershipId) {
+      throw new HttpError(403, 'Barbeiro só remarca na própria agenda', 'FORBIDDEN');
+    }
+    if (barberId !== booking.barberId) await getBarberAndService(auth.tenantId, barberId, booking.serviceId);
+
+    const tenant = await prisma.tenant.findUniqueOrThrow({ where: { id: auth.tenantId } });
+    const startAt = zonedToUtc(data.date, data.time, tenant.timezone);
+    try {
+      return await prisma.booking.update({
+        where: { id },
+        data: { barberId, startAt, endAt: addMinutes(startAt, booking.durationMinutes) },
+        include: listInclude,
+      });
+    } catch (e) {
+      if (isOverlapError(e)) throw slotTaken();
+      throw e;
+    }
+  },
+
+  // ===== Link "gerenciar agendamento" do cliente (sem login) =====
+
+  async findByManageToken(tenant: Tenant, token: string) {
+    const booking = await prisma.booking.findFirst({
+      where: { tenantId: tenant.id, manageTokenHash: sha256(token) },
+      include: { barber: { select: { user: { select: { name: true } } } }, service: { select: { name: true } } },
+    });
+    if (!booking) throw new HttpError(404, 'Agendamento não encontrado', 'NOT_FOUND');
+    const hoursLeft = (booking.startAt.getTime() - Date.now()) / 3_600_000;
+    return {
+      booking,
+      view: {
+        status: booking.status,
+        startAt: booking.startAt,
+        ...utcToZoned(booking.startAt, tenant.timezone),
+        service: booking.service.name,
+        barber: booking.barber.user.name,
+        priceCents: booking.priceCents,
+        canCancel: ACTIVE.includes(booking.status) && hoursLeft >= tenant.clientCancelMinHours,
+        cancelMinHours: tenant.clientCancelMinHours,
+      },
+    };
+  },
+
+  async cancelByClient(tenant: Tenant, token: string) {
+    const { booking, view } = await this.findByManageToken(tenant, token);
+    if (!view.canCancel) {
+      throw new HttpError(
+        400,
+        ACTIVE.includes(booking.status)
+          ? `Cancelamento pelo link só até ${tenant.clientCancelMinHours}h antes. Fale com a barbearia.`
+          : 'Este agendamento não pode mais ser cancelado.',
+        'CANCEL_NOT_ALLOWED',
+      );
+    }
+    await prisma.$transaction([
+      prisma.booking.updateMany({ where: { id: booking.id, status: { in: ACTIVE } }, data: { status: 'CANCELLED' } }),
+      prisma.notification.create({ data: { bookingId: booking.id, type: 'CANCELLATION' } }),
+    ]);
+    return { ...view, status: 'CANCELLED' as const, canCancel: false };
   },
 };
