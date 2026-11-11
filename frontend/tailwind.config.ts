@@ -1,7 +1,8 @@
 import type { Config } from 'tailwindcss';
 
 const config: Config = {
-  content: ['./index.html', './src/**/*.{js,ts,jsx,tsx}'],
+  // relative: caminhos resolvidos a partir deste arquivo, não da pasta onde o servidor foi iniciado
+  content: { relative: true, files: ['./index.html', './src/**/*.{js,ts,jsx,tsx}'] },
   theme: {
     extend: {
       colors: {
