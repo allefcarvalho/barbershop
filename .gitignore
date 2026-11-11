@@ -41,3 +41,6 @@ coverage/
 # Temp
 *.tmp
 *.temp
+
+# Cache do Vite
+.vite/
