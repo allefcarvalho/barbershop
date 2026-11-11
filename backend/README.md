@@ -28,7 +28,7 @@ npm test                                  # testes (usam o banco do .env)
 | Grupo | Acesso | Rotas |
 |-------|--------|-------|
 | `/auth` | público | `POST /login`, `POST /refresh` (cookie), `POST /logout`, `GET /me` (auth) |
-| `/public/:slug` | público | `GET /`, `GET /services`, `GET /barbers?serviceId`, `GET /barbers/:id/slots?date&serviceId`, `GET /products`, `POST /bookings`, `POST /bookings/manage` e `/bookings/manage/cancel` (token no corpo) |
+| `/public/:slug` | público | `GET /`, `GET /services`, `GET /barbers?serviceId`, `GET /barbers/:id/slots?date&serviceId`, `GET /products`, `POST /bookings`, `POST /bookings/manage` e `/bookings/manage/cancel` (token no corpo), `POST /waitlist` |
 | `/services` | equipe; escrita dono/gerente | `GET /`, `GET /:id`, `POST`, `PUT /:id`, `DELETE /:id` |
 | `/barbers` | equipe; escrita dono/gerente ou o próprio (perfil) | `GET /`, `GET /:id`, `POST`, `PUT /:id`, `DELETE /:id` |
 | `/availability/:barberId` | equipe; escrita dono/gerente ou o próprio | `GET`, `PUT`, `GET/POST /exceptions`, `DELETE /exceptions/:id` |
@@ -41,7 +41,8 @@ npm test                                  # testes (usam o banco do .env)
 | `/reports` | dono/gerente | `GET ?from&to` |
 | `/commissions` | equipe (barbeiro: só a própria); pagar dono/gerente | `GET ?from&to`, `POST /pay` |
 | `/products` | recepção+; cadastro dono/gerente | `GET /`, `GET /low-stock`, `GET /:id`, `POST`, `PUT`, `DELETE`, `POST/GET /:id/stock` |
-| `/notifications` | dono/gerente | `GET /`, `POST /process` |
+| `/notifications` | dono/gerente | `GET ?status`, `POST /:id/retry` (o envio é feito pelo worker) |
+| `/webhooks/whatsapp` | público, assinado pela Meta | `GET` (verificação), `POST` (status e respostas 1/2/SAIR) |
 
 Toda a superfície pública está em `src/modules/public.routes.ts` — revise esse arquivo ao expor algo novo.
 

@@ -8,9 +8,10 @@
     "frontend"
   ],
   "scripts": {
-    "dev": "concurrently \"npm run dev:backend\" \"npm run dev:frontend\"",
+    "dev": "concurrently -n api,web,worker \"npm run dev:backend\" \"npm run dev:frontend\" \"npm run worker\"",
     "dev:backend": "npm run dev --workspace=backend",
     "dev:frontend": "npm run dev --workspace=frontend",
+    "worker": "npm run worker --workspace=backend",
     "build": "npm run build --workspaces",
     "lint": "npm run lint --workspaces",
     "test": "npm test --workspaces --if-present",

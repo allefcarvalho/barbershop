@@ -13,8 +13,8 @@ Sistema web (SaaS) para barbearias: **agendamento online 24h** para o cliente e 
 | **0 — Fundação** | Multi-tenant, proteção contra double booking, fuso horário, autenticação real, permissões, testes e CI | ✅ Concluída |
 | **1 — MVP vendável** | Telas de gestão: agenda (filtros, status, encaixe), serviços, equipe, disponibilidade, clientes, produtos, configurações da barbearia; cancelamento pelo cliente via link; LGPD básica | ✅ Concluída (falta só o CAPTCHA, que precisa de conta no Cloudflare) |
 | **2 — Gestão** | Comanda, caixa, comissões, relatórios | ✅ Concluída |
-| **3 — Automação** | WhatsApp (confirmação, lembrete, cancelamento), lista de espera, política de no-show | ⏳ Próxima |
-| **4 — Plataforma** | Cadastro self-service de barbearias, planos e cobrança, multiunidade, fidelidade, PWA | ⏳ |
+| **3 — Automação** | WhatsApp (confirmação, lembrete, cancelamento), lista de espera, política de no-show | ✅ Concluída (o envio real depende da conta na Meta, veja [Ativar o WhatsApp](#ativar-o-whatsapp)) |
+| **4 — Plataforma** | Cadastro self-service de barbearias, planos e cobrança, multiunidade, fidelidade, PWA | ⏳ Próxima |
 
 ### Já funciona
 
@@ -23,6 +23,8 @@ Sistema web (SaaS) para barbearias: **agendamento online 24h** para o cliente e 
 - Agendamento em 4 etapas sem cadastro. Os horários levam em conta a duração do serviço, a grade do barbeiro, folgas e a antecedência mínima e máxima.
 - Aceite da política de privacidade (LGPD), com e-mail e observações opcionais.
 - Link pessoal (`/agendamento#…`) para ver e cancelar o próprio horário, até o prazo definido pela barbearia.
+- **WhatsApp:** confirmação com o link, lembrete antes do horário e aviso de cancelamento. O cliente pode responder **1** (confirma presença), **2** (cancela) ou **SAIR** (para de receber).
+- **Lista de espera:** num dia sem horário livre, o cliente pede para ser avisado. Se alguém cancelar, até 3 pessoas recebem o aviso com o link para agendar.
 
 **Para a equipe (painel `/admin`)**
 
@@ -38,7 +40,8 @@ Sistema web (SaaS) para barbearias: **agendamento online 24h** para o cliente e 
 | Equipe | Cadastrar membros, papéis, serviços que cada um atende e % de comissão | Dono e gerente |
 | Serviços | Criar, editar preço/duração, desativar | Dono e gerente |
 | Produtos | Cadastro, estoque baixo, entrada/saída/ajuste com histórico | Dono, gerente e recepção |
-| Configurações | Regras de agendamento, cancelamento, recorrência, fuso | Dono e gerente editam; recepção vê |
+| Mensagens | Mensagens automáticas: na fila, enviadas, falhas com o motivo; reenviar | Dono e gerente |
+| Configurações | Regras de agendamento, cancelamento, recorrência, fuso, lembrete, limite de faltas, número do WhatsApp | Dono e gerente editam; recepção vê |
 
 O painel funciona no celular: o menu vira uma barra de rolagem lateral e os formulários se ajustam à tela.
 
@@ -105,6 +108,7 @@ npm run dev
 
 - Site: http://localhost:5173
 - Painel: http://localhost:5173/admin
+- O `npm run dev` também sobe o **worker de mensagens**. Sem o token da Meta, as mensagens só aparecem no terminal.
 - API: http://localhost:3333/api/health
 
 **Login de desenvolvimento (criado pelo seed):** `admin@vikinges.com` / `admin123` (dono). Barbeiros: `ragnar@`, `bjorn@` e `ivar@vikinges.com` / `barber123`.
@@ -122,8 +126,30 @@ npm run dev
 | `npm run db:migrate` | Aplica/cria migrations |
 | `npm run db:seed` | Popula a barbearia de exemplo |
 | `npm run db:studio` | Abre o Prisma Studio |
+| `npm run worker` | Só o worker de mensagens (em produção: `npm run start:worker --workspace=backend`) |
 
 ---
+
+## Ativar o WhatsApp
+
+O sistema usa a **WhatsApp Cloud API** oficial da Meta. Os passos, uma vez por plataforma:
+
+1. Crie um app do tipo **Business** em developers.facebook.com e adicione o produto **WhatsApp**.
+2. No WhatsApp Manager, cadastre e aprove os **modelos de mensagem** (idioma Português/BR), com estes nomes e variáveis na ordem:
+
+| Modelo | Variáveis |
+|--------|-----------|
+| `agendamento_confirmado` | nome, barbearia, serviço, data, hora, profissional, link |
+| `agendamento_recebido` | nome, barbearia, serviço, data, hora, profissional, link |
+| `lembrete_agendamento` | nome, barbearia, serviço, data, hora, profissional (termine o texto com "Responda 1 para confirmar ou 2 para cancelar") |
+| `agendamento_cancelado` | nome, barbearia, serviço, data, hora |
+| `vaga_disponivel` | nome, barbearia, serviço, data, link |
+
+3. Gere um **token permanente** (usuário do sistema) e preencha no `backend/.env`: `WHATSAPP_TOKEN`, `WHATSAPP_APP_SECRET` (segredo do app) e `WHATSAPP_VERIFY_TOKEN` (uma frase que você escolhe).
+4. Configure o webhook do app para `https://SEU-DOMINIO/api/v1/webhooks/whatsapp`, com o mesmo `WHATSAPP_VERIFY_TOKEN`, e assine o campo **messages**.
+5. Em cada barbearia, em **Configurações → WhatsApp**, informe o **ID do número de telefone** (fica no painel da Meta).
+
+Até isso estar pronto, tudo funciona igual, só que as mensagens ficam registradas em **Mensagens** e no terminal do worker em vez de sair pelo WhatsApp.
 
 ## Decisões de arquitetura
 
@@ -133,6 +159,7 @@ npm run dev
 - **Dinheiro em centavos.** O agendamento guarda o preço e a duração do momento da reserva, então mudar um serviço não altera o histórico.
 - **Sessão segura.** O access token dura 15 min e fica só em memória. O refresh token fica em cookie `httpOnly`, troca a cada uso e, se for reutilizado, todas as sessões daquele login são encerradas.
 - **Permissões por papel e por dono do recurso.** Os papéis são Dono, Gerente, Recepção e Barbeiro. O barbeiro só altera a própria agenda e só vê os próprios atendimentos.
+- **Fila de mensagens no próprio PostgreSQL** (`FOR UPDATE SKIP LOCKED`), sem Redis nem serviço extra. Dá para rodar vários workers sem duplicar envio; se um cair no meio, a mensagem volta para a fila sozinha. Mensagem só sai para quem consentiu, e o token do link sai do banco assim que é enviado.
 - **Pronto para escalar na horizontal.** A API não guarda estado em memória. Com `REDIS_URL`, o rate limit é compartilhado entre instâncias.
 
 ## Testes
@@ -149,6 +176,23 @@ Os testes de integração rodam contra um PostgreSQL de verdade e cobrem:
 ---
 
 ## Histórico
+
+### 2026-11-13 — Fase 3: automação e WhatsApp
+- **Fila de mensagens** com worker separado. Tem retentativa com espera crescente e marca falha definitiva na 5ª tentativa.
+- **Mensagens automáticas:**
+  - confirmação com o link do cliente, ou "recebido" quando a barbearia precisa confirmar;
+  - lembrete X horas antes, configurável; o lembrete de um horário remarcado ou cancelado é descartado;
+  - aviso de cancelamento.
+- **WhatsApp Cloud API** por modelo aprovado. O webhook tem assinatura HMAC validada, atualiza falhas de entrega e entende as respostas **1**, **2** e **SAIR**.
+- **Lista de espera** no site. Ao cancelar um horário, até 3 pessoas daquele dia recebem o aviso.
+- **Política de faltas:** quem passou do limite de faltas em 6 meses agenda online como pendente.
+- **LGPD:**
+  - mensagem só para quem aceitou;
+  - no balcão, a equipe marca se o cliente autorizou;
+  - "SAIR" vale para sempre;
+  - o log não mostra o token do link nem o telefone completo.
+- **Painel:** nova tela de Mensagens e configurações de WhatsApp, lembrete e faltas.
+- **Testes:** 4 de textos e respostas, e 11 de integração com a API da Meta simulada (incluindo dois workers ao mesmo tempo). No total, 52 de backend e 3 de frontend.
 
 ### 2026-11-12 — Fase 2: gestão financeira
 - **Comanda:**

@@ -200,6 +200,7 @@ function BookingForm({ mode, date: initialDate, onClose }: { mode: FormMode; dat
   const [date, setDate] = useState(initialDate);
   const [time, setTime] = useState('');
   const [notes, setNotes] = useState('');
+  const [acceptMessages, setAcceptMessages] = useState(false);
 
   const activeServices = (services ?? []).filter((s) => s.active);
   const barbers = (staff ?? []).filter(
@@ -230,6 +231,7 @@ function BookingForm({ mode, date: initialDate, onClose }: { mode: FormMode; dat
         serviceId,
         barberId,
         notes: notes || undefined,
+        acceptMessages,
         ...(mode.kind === 'walkin' ? { walkIn: true } : { date, time }),
       });
     },
@@ -305,6 +307,12 @@ function BookingForm({ mode, date: initialDate, onClose }: { mode: FormMode; dat
         )}
 
         {!editing && <TextArea label="Observações" value={notes} onChange={(e) => setNotes(e.target.value)} maxLength={500} />}
+        {!editing && !found && (
+          <label className="flex items-start gap-2 text-xs text-[#C8C4BC] font-body cursor-pointer">
+            <input type="checkbox" checked={acceptMessages} onChange={(e) => setAcceptMessages(e.target.checked)} className="mt-0.5 w-4 h-4 accent-[#C9A96E]" />
+            Cliente autorizou receber confirmação e lembrete no WhatsApp
+          </label>
+        )}
 
         <div className="flex justify-end gap-2 pt-2">
           <Button type="button" variant="ghost" onClick={onClose}>Voltar</Button>

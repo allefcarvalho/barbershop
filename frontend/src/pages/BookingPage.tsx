@@ -19,6 +19,7 @@ import { apiErrorMessage } from '../config/api';
 import { useBarbers } from '../hooks/useBarbers';
 import { useAvailableSlots } from '../hooks/useAvailableSlots';
 import { bookingService } from '../services/booking.service';
+import { WaitlistForm } from '../components/booking/WaitlistForm';
 
 const STEPS = ['Serviço', 'Barbeiro', 'Horário', 'Confirmar'];
 
@@ -29,7 +30,8 @@ export function BookingPage() {
   const [step, setStep] = useState(preselectedService ? 1 : 0);
   const [selectedServiceId, setSelectedServiceId] = useState(preselectedService);
   const [selectedBarberId, setSelectedBarberId] = useState('');
-  const [selectedDate, setSelectedDate] = useState('');
+  // ?date= vem do link de vaga da lista de espera
+  const [selectedDate, setSelectedDate] = useState(searchParams.get('date') ?? '');
   const [selectedTime, setSelectedTime] = useState('');
   const [clientName, setClientName] = useState('');
   const [clientPhone, setClientPhone] = useState('');
@@ -343,9 +345,12 @@ export function BookingPage() {
                     </div>
                   )}
                   {slots && slots.length === 0 && (
-                    <p className="text-center text-[#5A5650] font-body py-6">
-                      Nenhum horário disponível nesta data. Tente outra data.
-                    </p>
+                    <>
+                      <p className="text-center text-[#5A5650] font-body pt-6">
+                        Nenhum horário disponível nesta data. Tente outra data.
+                      </p>
+                      <WaitlistForm key={selectedDate} serviceId={selectedServiceId} barberId={selectedBarberId} date={selectedDate} />
+                    </>
                   )}
                 </div>
               )}

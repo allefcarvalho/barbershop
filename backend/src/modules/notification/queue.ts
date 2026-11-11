@@ -80,7 +80,9 @@ async function deliver(id: string): Promise<Outcome> {
     const externalId = await sendWhatsApp(tenant.whatsappPhoneNumberId, client.phone, msg);
     return { status: 'SENT', externalId, channel: 'WHATSAPP' };
   }
-  console.log(`[MENSAGEM:INTERNA] ${tenant.slug} → ${client.phone}: ${msg.text}`);
+  // Log sem o token do link (log de servidor não é lugar de credencial) e sem o telefone completo.
+  const safe = msg.text.replace(/(agendamento#)[\w-]+/, '$1***');
+  console.log(`[MENSAGEM:INTERNA] ${tenant.slug} → ${client.phone.slice(0, -4)}****: ${safe}`);
   return { status: 'SENT', channel: 'INTERNAL' };
 }
 

@@ -20,6 +20,7 @@ import { SettingsPage } from './pages/admin/SettingsPage';
 import { CashPage } from './pages/admin/CashPage';
 import { ReportsPage } from './pages/admin/ReportsPage';
 import { CommissionsPage } from './pages/admin/CommissionsPage';
+import { MessagesPage } from './pages/admin/MessagesPage';
 
 function App() {
   return (
@@ -44,6 +45,7 @@ function App() {
         <Route path="caixa" element={<CashPage />} />
         <Route path="relatorios" element={<ReportsPage />} />
         <Route path="comissoes" element={<CommissionsPage />} />
+        <Route path="mensagens" element={<MessagesPage />} />
       </Route>
     </Routes>
   );

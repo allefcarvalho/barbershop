@@ -5,7 +5,7 @@
 import { Link, Navigate, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { authService, type SessionUser } from '../../services/auth.service';
-import { LayoutDashboard, Calendar, Scissors, Package, LogOut, ChevronRight, Users, Clock, UserRound, Settings, Wallet, BarChart3, BadgePercent } from 'lucide-react';
+import { LayoutDashboard, Calendar, Scissors, Package, LogOut, ChevronRight, Users, Clock, UserRound, Settings, Wallet, BarChart3, BadgePercent, MessageCircle } from 'lucide-react';
 import clsx from 'clsx';
 import logo from '../../assets/logo.png';
 
@@ -25,6 +25,7 @@ const sidebarLinks: { label: string; href: string; icon: typeof Calendar; roles?
   { label: 'Produtos', href: '/admin/produtos', icon: Package, roles: FRONT_DESK },
   { label: 'Relatórios', href: '/admin/relatorios', icon: BarChart3, roles: MANAGERS },
   { label: 'Comissões', href: '/admin/comissoes', icon: BadgePercent },
+  { label: 'Mensagens', href: '/admin/mensagens', icon: MessageCircle, roles: MANAGERS },
   { label: 'Configurações', href: '/admin/configuracoes', icon: Settings, roles: FRONT_DESK },
 ];
 

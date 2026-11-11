@@ -17,6 +17,11 @@ interface Settings {
   recurringThreshold: number;
   maxActiveBookingsPerPhone: number;
   requireConfirmation: boolean;
+  reminderHours: number;
+  noShowLimit: number;
+  whatsappPhoneNumberId: string | null;
+  /** Somente leitura: o servidor tem o token da Meta */
+  whatsappReady: boolean;
 }
 
 const TIMEZONES = ['America/Sao_Paulo', 'America/Manaus', 'America/Cuiaba', 'America/Belem', 'America/Fortaleza', 'America/Recife', 'America/Bahia', 'America/Rio_Branco', 'America/Noronha'];
@@ -88,6 +93,29 @@ function SettingsForm({ initial }: { initial: Settings }) {
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <Input label="Cliente cancela pelo link até (horas antes)" min={0} max={168} {...num('clientCancelMinHours')} />
           <Input label="Vira cliente recorrente a partir de (visitas)" min={1} max={100} {...num('recurringThreshold')} />
+          <Input label="Faltas para exigir confirmação (0 = desligado)" min={0} max={20} {...num('noShowLimit')} />
+        </div>
+        <p className="text-xs text-[#5A5650] font-body">Quem faltou esse número de vezes nos últimos 6 meses agenda online como "pendente", e a equipe confirma.</p>
+      </Section>
+
+      <Section title="WhatsApp e lembretes" hint="Confirmação, lembrete, cancelamento e aviso de vaga são enviados automaticamente para quem aceitou receber.">
+        <p className={`text-xs font-body ${s.whatsappReady && s.whatsappPhoneNumberId ? 'text-green-400' : 'text-yellow-400'}`}>
+          {!s.whatsappReady
+            ? 'Envio pelo WhatsApp ainda não ativado no servidor: as mensagens ficam registradas em Mensagens, mas não saem.'
+            : s.whatsappPhoneNumberId
+              ? 'WhatsApp ativo para esta barbearia.'
+              : 'Informe o ID do número para ativar o WhatsApp desta barbearia.'}
+        </p>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <Input label="Lembrete antes do horário (horas, 0 = sem)" min={0} max={168} {...num('reminderHours')} />
+          <Input
+            label="ID do número (WhatsApp Cloud API)"
+            inputMode="numeric"
+            value={s.whatsappPhoneNumberId ?? ''}
+            onChange={(e) => set('whatsappPhoneNumberId', e.target.value.trim() || null)}
+            disabled={!canEdit}
+            placeholder="Ex.: 123456789012345"
+          />
         </div>
       </Section>
 
