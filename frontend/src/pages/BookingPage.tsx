@@ -7,6 +7,7 @@ import { Link, useSearchParams } from 'react-router-dom';
 import { ArrowLeft, ArrowRight, Check, Calendar, Clock, User, Scissors, AlertCircle } from 'lucide-react';
 import { formatBRL } from '../utils/format';
 import clsx from 'clsx';
+import toast from 'react-hot-toast';
 import { Navbar } from '../components/layout/Navbar';
 import { Container } from '../components/layout/Container';
 import { StepIndicator } from '../components/booking/StepIndicator';
@@ -33,7 +34,11 @@ export function BookingPage() {
   const [clientName, setClientName] = useState('');
   const [clientPhone, setClientPhone] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [isSuccess, setIsSuccess] = useState(false);
+  const [clientEmail, setClientEmail] = useState('');
+  const [notes, setNotes] = useState('');
+  const [acceptTerms, setAcceptTerms] = useState(false);
+  const [result, setResult] = useState<{ status: string; manageToken: string } | null>(null);
+  const isSuccess = !!result;
   const [submitError, setSubmitError] = useState('');
 
   const queryClient = useQueryClient();
@@ -64,22 +69,25 @@ export function BookingPage() {
     (step === 0 && selectedServiceId) ||
     (step === 1 && selectedBarberId) ||
     (step === 2 && selectedDate && selectedTime) ||
-    (step === 3 && clientName.length >= 2 && clientPhone.length >= 8);
+    (step === 3 && clientName.length >= 2 && clientPhone.replace(/\D/g, '').length >= 10 && acceptTerms);
 
   const handleSubmit = async () => {
     setIsSubmitting(true);
     setSubmitError('');
 
     try {
-      await bookingService.create({
+      const booking = await bookingService.create({
         clientName,
         clientPhone,
+        clientEmail: clientEmail || undefined,
+        notes: notes || undefined,
         barberId: selectedBarberId,
         serviceId: selectedServiceId,
         date: selectedDate,
         time: selectedTime,
+        acceptTerms: true,
       });
-      setIsSuccess(true);
+      setResult(booking);
     } catch (err) {
       setSubmitError(apiErrorMessage(err, 'Erro ao criar agendamento'));
       // Horário pode ter sido tomado por outra pessoa: atualiza a lista.
@@ -91,6 +99,9 @@ export function BookingPage() {
 
   // === Success Screen ===
   if (isSuccess) {
+    const pending = result.status === 'PENDING';
+    // Token no fragmento (#): o navegador não envia essa parte da URL a nenhum servidor.
+    const manageUrl = `${window.location.origin}/agendamento#${result.manageToken}`;
     return (
       <>
         <Navbar />
@@ -101,11 +112,13 @@ export function BookingPage() {
                 <Check className="w-10 h-10 text-brand-400" />
               </div>
               <h2 className="text-3xl font-display font-bold text-white">
-                Agendamento Confirmado!
+                {pending ? 'Agendamento Recebido!' : 'Agendamento Confirmado!'}
               </h2>
               <p className="text-[#8A8680] font-body max-w-md mx-auto">
-                Seu horário com <strong className="text-white">{selectedBarber?.name}</strong> está marcado para{' '}
-                <strong className="text-brand-400">{selectedDate} às {selectedTime}</strong>.
+                Seu horário com <strong className="text-white">{selectedBarber?.name}</strong>{' '}
+                {pending ? 'foi solicitado para' : 'está marcado para'}{' '}
+                <strong className="text-brand-400">{selectedDate.split('-').reverse().join('/')} às {selectedTime}</strong>.
+                {pending && ' A barbearia vai confirmar em breve.'}
               </p>
               <div className="p-6 rounded-xl bg-panel border border-white/5 max-w-sm mx-auto text-left space-y-3">
                 <div className="flex items-center gap-3">
@@ -123,6 +136,22 @@ export function BookingPage() {
                 <div className="flex items-center gap-3">
                   <Clock className="w-4 h-4 text-brand-400" />
                   <span className="text-sm text-[#8A8680] font-body">{selectedTime}</span>
+                </div>
+              </div>
+              <div className="max-w-sm mx-auto text-left space-y-2 p-4 rounded-xl border border-brand-500/20 bg-brand-500/5">
+                <p className="text-xs text-[#8A8680] font-body">
+                  Guarde este link para ver ou cancelar seu horário:
+                </p>
+                <div className="flex gap-2">
+                  <input readOnly value={manageUrl} onFocus={(e) => e.target.select()} aria-label="Link do agendamento"
+                    className="flex-1 min-w-0 px-3 py-2 bg-dark border border-white/10 rounded text-xs text-white font-body" />
+                  <button
+                    type="button"
+                    onClick={() => navigator.clipboard.writeText(manageUrl).then(() => toast.success('Link copiado'))}
+                    className="px-3 py-2 text-xs font-semibold uppercase tracking-wider bg-brand-500 text-dark rounded font-body"
+                  >
+                    Copiar
+                  </button>
                 </div>
               </div>
               <Link
@@ -360,11 +389,41 @@ export function BookingPage() {
                 />
                 <input
                   type="tel"
-                  placeholder="Seu telefone (WhatsApp)"
+                  placeholder="Seu telefone (WhatsApp) com DDD"
+                  autoComplete="tel"
                   value={clientPhone}
                   onChange={(e) => setClientPhone(e.target.value)}
                   className="w-full px-4 py-3 bg-dark border border-white/10 rounded-lg text-white placeholder-[#5A5650] focus:border-brand-500/40 focus:outline-none transition-colors font-body"
                 />
+                <input
+                  type="email"
+                  placeholder="E-mail (opcional)"
+                  autoComplete="email"
+                  value={clientEmail}
+                  onChange={(e) => setClientEmail(e.target.value)}
+                  className="w-full px-4 py-3 bg-dark border border-white/10 rounded-lg text-white placeholder-[#5A5650] focus:border-brand-500/40 focus:outline-none transition-colors font-body"
+                />
+                <textarea
+                  placeholder="Observações (opcional)"
+                  rows={2}
+                  maxLength={500}
+                  value={notes}
+                  onChange={(e) => setNotes(e.target.value)}
+                  className="w-full px-4 py-3 bg-dark border border-white/10 rounded-lg text-white placeholder-[#5A5650] focus:border-brand-500/40 focus:outline-none transition-colors font-body"
+                />
+                <label className="flex items-start gap-3 text-xs text-[#8A8680] font-body cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={acceptTerms}
+                    onChange={(e) => setAcceptTerms(e.target.checked)}
+                    className="mt-0.5 w-4 h-4 accent-[#C9A96E]"
+                  />
+                  <span>
+                    Li e aceito a{' '}
+                    <Link to="/privacidade" target="_blank" className="text-brand-400 underline">política de privacidade</Link>
+                    {' '}e concordo em receber mensagens sobre este agendamento.
+                  </span>
+                </label>
               </div>
 
               {/* API Error */}

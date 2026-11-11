@@ -8,6 +8,7 @@ export interface CreateBookingPayload {
   serviceId: string;
   date: string; // YYYY-MM-DD no fuso da barbearia
   time: string; // HH:mm
+  acceptTerms: true;
   notes?: string;
 }
 
@@ -17,7 +18,7 @@ export interface TimeSlot {
 }
 
 export const bookingService = {
-  async create(data: CreateBookingPayload) {
+  async create(data: CreateBookingPayload): Promise<{ status: string; manageToken: string }> {
     const res = await api.post(pub('/bookings'), data);
     return res.data.data;
   },
